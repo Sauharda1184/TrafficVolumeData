@@ -8,32 +8,56 @@ INTERSECTION = "CSAH 61 (Flying Cloud Dr) at College View Dr"
 
 GRAPHS = [
     {
-        "csv":       "NB_THROUGH.csv",
-        "col":       "NBT",
-        "title":     f"Northbound Through\n{INTERSECTION}",
-        "approach":  "Northbound Approach — Through Movement",
-        "out":       "NB_Through.png",
+        "csv":   "NB_THROUGH.csv",
+        "col":   "NBT",
+        "title": f"Northbound Through\n{INTERSECTION}",
+        "out":   "NB_Through.png",
     },
     {
-        "csv":       "NB_LEFT.csv",
-        "col":       "NBL",
-        "title":     f"Northbound Left Turn\n{INTERSECTION}",
-        "approach":  "Northbound Approach — Left Turn Movement",
-        "out":       "NB_Left.png",
+        "csv":   "NB_LEFT.csv",
+        "col":   "NBL",
+        "title": f"Northbound Left Turn\n{INTERSECTION}",
+        "out":   "NB_Left.png",
     },
     {
-        "csv":       "SB_THROUGH.csv",
-        "col":       "SBT",
-        "title":     f"Southbound Through\n{INTERSECTION}",
-        "approach":  "Southbound Approach — Through Movement",
-        "out":       "SB_Through.png",
+        "csv":   "SB_THROUGH.csv",
+        "col":   "SBT",
+        "title": f"Southbound Through\n{INTERSECTION}",
+        "out":   "SB_Through.png",
     },
     {
-        "csv":       "SB_LEFT.csv",
-        "col":       "SBL",
-        "title":     f"Southbound Left Turn\n{INTERSECTION}",
-        "approach":  "Southbound Approach — Left Turn Movement",
-        "out":       "SB_Left.png",
+        "csv":   "SB_LEFT.csv",
+        "col":   "SBL",
+        "title": f"Southbound Left Turn\n{INTERSECTION}",
+        "out":   "SB_Left.png",
+    },
+    {
+        "csv":        "NB_THROUGH_DATA.csv",
+        "col":        "NBT",
+        "title":      f"Northbound Through\n{INTERSECTION}",
+        "out":        "NBT_GRAPH.png",
+        "legend_title": "Date (June 2026)",
+    },
+    {
+        "csv":        "NB_LEFT_DATA.csv",
+        "col":        "NBL",
+        "title":      f"Northbound Left Turn\n{INTERSECTION}",
+        "out":        "NBL_GRAPH.png",
+        "legend_title": "Date (June 2026)",
+    },
+    {
+        "csv":        "SB_THROUGH_DATA.csv",
+        "col":        "SBT",
+        "title":      f"Southbound Through\n{INTERSECTION}",
+        "out":        "SBT_GRAPH.png",
+        "legend_title": "Date (June 2026)",
+    },
+    {
+        "csv":        "SB_LEFT_DATA.csv",
+        "col":        "SBL",
+        "title":      f"Southbound Left Turn\n{INTERSECTION}",
+        "out":        "SBL_GRAPH.png",
+        "legend_title": "Date (June 2026)",
     },
 ]
 
@@ -117,7 +141,7 @@ def plot_graph(cfg):
 
     # Legend
     ax.legend(
-        title="Date (May 2026)",
+        title=cfg.get("legend_title", "Date (May 2026)"),
         title_fontsize=9,
         fontsize=8.5,
         loc="upper left",

@@ -14,6 +14,18 @@ SB_FILES = [
     "SB_MAY_11.csv", "SB_MAY_12.csv", "SB_MAY_13.csv", "SB_MAY_14.csv", "SB_MAY_15.csv",
 ]
 
+NB_DATA_DIR = "NB_DATA"
+NB_DATA_FILES = [
+    "NB_June_1.csv", "NB_June_2.csv", "NB_June_3.csv", "NB_June_4.csv", "NB_June_5.csv",
+    "NB_June_8.csv", "NB_June_9.csv", "NB_June_10.csv", "NB_June_11.csv", "NB_June_12.csv",
+]
+
+SB_DATA_DIR = "SB_DATA"
+SB_DATA_FILES = [
+    "SB_June_1.csv", "SB_June_2.csv", "SB_June_3.csv", "SB_June_4.csv", "SB_June_5.csv",
+    "SB_June_8.csv", "SB_June_9.csv", "SB_June_10.csv", "SB_June_11.csv", "SB_June_12.csv",
+]
+
 
 def process_file(filepath, through_zones, left_zone):
     """Return list of (hour, through, left) summed across all 15-min intervals in that hour."""
@@ -71,6 +83,21 @@ def main():
             sb_rows.append({"File": filename, "Hour": hour, "T": t, "L": l})
 
     write_csvs(sb_rows, "SB_THROUGH.csv", "SB_LEFT.csv", "SBT", "SBL")
+
+    # June data
+    nb_data_rows = []
+    for filename in NB_DATA_FILES:
+        for hour, t, l in process_file(os.path.join(NB_DATA_DIR, filename), {"NBT1", "NBT2"}, "NBL1"):
+            nb_data_rows.append({"File": filename, "Hour": hour, "T": t, "L": l})
+
+    write_csvs(nb_data_rows, "NB_THROUGH_DATA.csv", "NB_LEFT_DATA.csv", "NBT", "NBL")
+
+    sb_data_rows = []
+    for filename in SB_DATA_FILES:
+        for hour, t, l in process_file(os.path.join(SB_DATA_DIR, filename), {"SBT1", "SBT2"}, "SBL1"):
+            sb_data_rows.append({"File": filename, "Hour": hour, "T": t, "L": l})
+
+    write_csvs(sb_data_rows, "SB_THROUGH_DATA.csv", "SB_LEFT_DATA.csv", "SBT", "SBL")
 
 
 if __name__ == "__main__":
