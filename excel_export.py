@@ -127,6 +127,24 @@ def build_xlsx(cfg):
             if r % 2 == 0:
                 cell.fill = alt_fill
 
+    # Total row
+    total_row   = 3 + len(HOURS)
+    total_fill  = PatternFill("solid", fgColor="1F4E79")
+    total_font  = Font(bold=True, color="FFFFFF", size=10)
+    total_cell  = ws.cell(row=total_row, column=1, value="Total")
+    total_cell.font      = total_font
+    total_cell.fill      = total_fill
+    total_cell.alignment = Alignment(horizontal="center")
+    total_cell.border    = thin_border()
+
+    for c, day in enumerate(days, start=2):
+        day_total = sum(data[day].get(h, 0) for h in HOURS)
+        cell           = ws.cell(row=total_row, column=c, value=day_total)
+        cell.font      = total_font
+        cell.fill      = total_fill
+        cell.alignment = Alignment(horizontal="center")
+        cell.border    = thin_border()
+
     ws.column_dimensions["A"].width = 9
     for c in range(2, len(days) + 2):
         ws.column_dimensions[get_column_letter(c)].width = 11
@@ -142,6 +160,8 @@ def build_xlsx(cfg):
     chart.width        = 28       # wider so legend on right doesn't overlap plot
     chart.height       = 15
     chart.y_axis.numFmt = "0"
+    chart.x_axis.delete = False
+    chart.y_axis.delete = False
 
     # Data + categories
     data_ref = Reference(ws, min_col=2, max_col=len(days) + 1,
