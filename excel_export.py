@@ -141,11 +141,7 @@ def build_xlsx(cfg):
     chart.x_axis.title = "Hour of Day"
     chart.width        = 28       # wider so legend on right doesn't overlap plot
     chart.height       = 15
-    chart.y_axis.numFmt        = "0"
-    chart.y_axis.crossAx       = 100
-    chart.x_axis.crossAx       = 200
-    chart.x_axis.tickLblSkip   = 1
-    chart.x_axis.tickMarkSkip  = 1
+    chart.y_axis.numFmt = "0"
 
     # Data + categories
     data_ref = Reference(ws, min_col=2, max_col=len(days) + 1,
