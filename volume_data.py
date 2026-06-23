@@ -83,6 +83,34 @@ COMBO_COLUMNS = {
 # Data processing
 # ─────────────────────────────────────────────────────────────────────────────
 
+def scan_all_zones(directory):
+    """Return sorted list of every unique ZoneName found across all CSVs in directory."""
+    zones = set()
+    for fname in sorted(Path(directory).glob("*.csv")):
+        with open(fname, newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                z = row.get("ZoneName", "").strip()
+                if z:
+                    zones.add(z)
+    return sorted(zones)
+
+
+def config_to_zone_map(zone_config):
+    """
+    Convert GUI zone config to the zone_map format used by process_file().
+
+    zone_config: {zone_name: {"T": col_or_None, "L": col_or_None, "R": col_or_None}}
+    Returns:     {zone_name: [(movement, column), ...]}   (only non-Skip entries)
+    """
+    zone_map = {}
+    for zone, mv_cols in zone_config.items():
+        mappings = [(mv, col) for mv, col in mv_cols.items() if col and col != "Skip"]
+        if mappings:
+            zone_map[zone] = mappings
+    return zone_map
+
+
 def discover_zones(directory, approach):
     """
     Scan all CSV files in *directory* and return a zone map:
