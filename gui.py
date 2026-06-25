@@ -472,7 +472,8 @@ class App(tk.Tk):
                     desc = "  +  ".join(f"{mv}←{col}" for mv, col in mappings)
                     self._log(f"  {zone:14s}  {desc}", "dim")
 
-                all_pivot = vd.load_all_files(directory, zone_map)
+                all_pivot    = vd.load_all_files(directory, zone_map)
+                all_pivot_15 = vd.load_all_files_15min(directory, zone_map)
 
                 for movement, pivot_data in all_pivot.items():
                     days      = list(pivot_data.keys())
@@ -485,7 +486,8 @@ class App(tk.Tk):
 
                     vd.write_csv(pivot_data, days, f"{approach}{movement}", csv_path)
                     self._log(f"  CSV  → {os.path.basename(csv_path)}", "ok")
-                    vd.build_excel(pivot_data, days, title, xlsx_path)
+                    vd.build_excel(pivot_data, days, title, xlsx_path,
+                                   pivot_15min=all_pivot_15.get(movement))
                     self._log(f"  XLSX → {os.path.basename(xlsx_path)}", "ok")
 
             self._log("\n" + "─" * 56, "dim")

@@ -63,8 +63,9 @@ APPROACH_LABELS = {
 # Styling constants (match the existing _GRAPH.png palette)
 # ─────────────────────────────────────────────────────────────────────────────
 
-HOURS = list(range(23))
+HOURS      = list(range(23))
 HOUR_LABELS = [f"{h:02d}:00" for h in HOURS]
+INTERVALS   = [f"{h:02d}:{m:02d}" for h in range(23) for m in (0, 15, 30, 45)]
 
 DAY_COLORS = [
     "e6194b", "3cb44b", "4363d8", "f58231", "911eb4",
@@ -207,6 +208,46 @@ def load_all_files(directory, zone_map):
     return dict(pivot)
 
 
+def process_file_15min(filepath, zone_map):
+    """
+    Read one CSV file and return raw 15-minute interval totals per movement.
+    Returns: {movement: {"HH:MM": total_volume}}
+    """
+    intervals = defaultdict(lambda: defaultdict(int))
+
+    with open(filepath, newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            zone = row.get("ZoneName", "").strip()
+            if zone not in zone_map:
+                continue
+            ts       = row["TimeStamp"].strip()
+            interval = ts[11:16]              # "HH:MM"
+            for movement, column in zone_map[zone]:
+                value = int(float(row.get(column, 0) or 0))
+                intervals[movement][interval] += value
+
+    return {mv: dict(ivs) for mv, ivs in intervals.items()}
+
+
+def load_all_files_15min(directory, zone_map):
+    """
+    Process every CSV in *directory* and return pivoted 15-min data per movement.
+    Returns: {movement: {day_label: {"HH:MM": volume}}}
+    """
+    pivot = defaultdict(dict)
+
+    for fname in sorted(Path(directory).glob("*.csv"),
+                        key=lambda p: [int(x) if x.isdigit() else x
+                                       for x in re.split(r"(\d+)", p.stem)]):
+        label     = day_label(fname.name)
+        file_data = process_file_15min(fname, zone_map)
+        for movement, iv_data in file_data.items():
+            pivot[movement][label] = iv_data
+
+    return dict(pivot)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CSV output
 # ─────────────────────────────────────────────────────────────────────────────
@@ -233,8 +274,9 @@ def _thin_border():
     return Border(left=s, right=s, top=s, bottom=s)
 
 
-def build_excel(pivot_data, days, title, out_path):
-    """Build a styled Excel workbook with a Data sheet and a Chart sheet."""
+def build_excel(pivot_data, days, title, out_path, pivot_15min=None):
+    """Build a styled Excel workbook with a Data sheet and a Chart sheet.
+    If pivot_15min is provided, also adds '15-min Data' and '15-min Chart' sheets."""
     wb = Workbook()
 
     # ── Data sheet ───────────────────────────────────────────────────────────
@@ -340,8 +382,163 @@ def build_excel(pivot_data, days, title, out_path):
 
     wc.add_chart(chart, "B2")
 
+    # ── 15-min sheets (optional) ─────────────────────────────────────────────
+    if pivot_15min is not None:
+        _build_15min_data_sheet(wb, pivot_15min, days, title, n_days)
+        _build_15min_chart_sheet(wb, pivot_15min, days, title, n_days)
+
     wb.save(out_path)
     print(f"  XLSX → {out_path}")
+
+
+def _build_15min_data_sheet(wb, pivot_15min, days, title, n_days):
+    """Grouped/expandable sheet: hourly summary rows + collapsible 15-min detail rows."""
+    ws = wb.create_sheet("15-min Data")
+
+    # Summary rows appear ABOVE their detail rows so [+] sits on the summary row
+    ws.sheet_properties.outlinePr.summaryBelow  = False
+    ws.sheet_properties.outlinePr.summaryRight  = False
+
+    # Title row
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_days + 1)
+    tc           = ws.cell(row=1, column=1, value=f"{title} — 15-Minute Intervals")
+    tc.font      = Font(bold=True, size=13, color="FFFFFF")
+    tc.alignment = Alignment(horizontal="center", vertical="center")
+    tc.fill      = PatternFill("solid", fgColor="1F4E79")
+    ws.row_dimensions[1].height = 24
+
+    # Instruction row
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=n_days + 1)
+    ic           = ws.cell(row=2, column=1,
+                           value="Click [+] on the left margin to expand an hour into its four 15-minute intervals")
+    ic.font      = Font(size=9, italic=True, color="444444")
+    ic.alignment = Alignment(horizontal="center")
+    ic.fill      = PatternFill("solid", fgColor="EBF3FB")
+    ws.row_dimensions[2].height = 16
+
+    # Header row
+    hdr_fill = PatternFill("solid", fgColor="2E75B6")
+    hdr_font = Font(bold=True, color="FFFFFF", size=10)
+    h = ws.cell(row=3, column=1, value="Hour / Interval")
+    h.font = hdr_font; h.fill = hdr_fill
+    h.alignment = Alignment(horizontal="center"); h.border = _thin_border()
+    for c, day in enumerate(days, start=2):
+        cell = ws.cell(row=3, column=c, value=day)
+        cell.font = hdr_font; cell.fill = hdr_fill
+        cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
+
+    sum_fill   = PatternFill("solid", fgColor="D6E4F0")
+    sum_font   = Font(bold=True, size=10)
+    det_font   = Font(size=9)
+    det_fill_a = PatternFill("solid", fgColor="FFFFFF")
+    det_fill_b = PatternFill("solid", fgColor="F5F9FD")
+    tot_fill   = PatternFill("solid", fgColor="1F4E79")
+    tot_font   = Font(bold=True, color="FFFFFF", size=10)
+
+    r = 4
+    for h_idx, hour in enumerate(HOURS):
+        # ── Summary row (hourly total) ────────────────────────────────────────
+        sc = ws.cell(row=r, column=1, value=f"{hour:02d}:00")
+        sc.font = sum_font; sc.fill = sum_fill
+        sc.alignment = Alignment(horizontal="center"); sc.border = _thin_border()
+        for c, day in enumerate(days, start=2):
+            val = sum(pivot_15min.get(day, {}).get(f"{hour:02d}:{m:02d}", 0)
+                      for m in (0, 15, 30, 45))
+            cell = ws.cell(row=r, column=c, value=val)
+            cell.font = sum_font; cell.fill = sum_fill
+            cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
+        r += 1
+
+        # ── Detail rows (collapsed by default) ───────────────────────────────
+        for i, m in enumerate((0, 15, 30, 45)):
+            interval = f"{hour:02d}:{m:02d}"
+            fill = det_fill_b if i % 2 else det_fill_a
+            dc = ws.cell(row=r, column=1, value=interval)
+            dc.font = det_font; dc.fill = fill
+            dc.alignment = Alignment(horizontal="center", indent=2); dc.border = _thin_border()
+            for c, day in enumerate(days, start=2):
+                val  = pivot_15min.get(day, {}).get(interval, 0)
+                cell = ws.cell(row=r, column=c, value=val)
+                cell.font = det_font; cell.fill = fill
+                cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
+            ws.row_dimensions[r].outline_level = 1
+            ws.row_dimensions[r].hidden        = True
+            r += 1
+
+    # Total row
+    tc2 = ws.cell(row=r, column=1, value="Total")
+    tc2.font = tot_font; tc2.fill = tot_fill
+    tc2.alignment = Alignment(horizontal="center"); tc2.border = _thin_border()
+    for c, day in enumerate(days, start=2):
+        val  = sum(pivot_15min.get(day, {}).get(iv, 0) for iv in INTERVALS)
+        cell = ws.cell(row=r, column=c, value=val)
+        cell.font = tot_font; cell.fill = tot_fill
+        cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
+
+    ws.column_dimensions["A"].width = 15
+    for c in range(2, n_days + 2):
+        ws.column_dimensions[get_column_letter(c)].width = 11
+    ws.freeze_panes = "B4"
+
+
+def _build_15min_chart_sheet(wb, pivot_15min, days, title, n_days):
+    """Flat 92-row data table + line chart on a dedicated sheet."""
+    wc = wb.create_sheet("15-min Chart")
+
+    # ── Data table (chart draws from this) ───────────────────────────────────
+    hdr_fill = PatternFill("solid", fgColor="2E75B6")
+    hdr_font = Font(bold=True, color="FFFFFF", size=9)
+
+    h = wc.cell(row=1, column=1, value="Interval")
+    h.font = hdr_font; h.fill = hdr_fill
+    h.alignment = Alignment(horizontal="center")
+    for c, day in enumerate(days, start=2):
+        cell = wc.cell(row=1, column=c, value=day)
+        cell.font = hdr_font; cell.fill = hdr_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    for r, interval in enumerate(INTERVALS, start=2):
+        wc.cell(row=r, column=1, value=interval)
+        for c, day in enumerate(days, start=2):
+            wc.cell(row=r, column=c, value=pivot_15min.get(day, {}).get(interval, 0))
+
+    # ── Chart ─────────────────────────────────────────────────────────────────
+    chart              = LineChart()
+    chart.title        = f"{title} — 15-Minute Intervals"
+    chart.y_axis.title = "Traffic Volume (vehicles)"
+    chart.x_axis.title = "15-Minute Interval"
+    chart.width        = 32
+    chart.height       = 16
+    chart.y_axis.numFmt = "0"
+    chart.x_axis.delete = False
+    chart.y_axis.delete = False
+
+    data_ref = Reference(wc, min_col=2, max_col=n_days + 1,
+                         min_row=1, max_row=1 + len(INTERVALS))
+    chart.add_data(data_ref, titles_from_data=True)
+    cats = Reference(wc, min_col=1, min_row=2, max_row=1 + len(INTERVALS))
+    chart.set_categories(cats)
+
+    for i, series in enumerate(chart.series):
+        color = DAY_COLORS[i % len(DAY_COLORS)]
+        series.smooth          = True
+        series.graphicalProperties.line.solidFill        = color
+        series.graphicalProperties.line.width            = 15000
+        series.marker.symbol                             = "circle"
+        series.marker.size                               = 3
+        series.marker.graphicalProperties.solidFill      = color
+        series.marker.graphicalProperties.line.solidFill = color
+
+    legend          = Legend()
+    legend.position = "r"
+    legend.overlay  = False
+    chart.legend    = legend
+
+    wc.add_chart(chart, f"{get_column_letter(n_days + 3)}1")
+
+    wc.column_dimensions["A"].width = 9
+    for c in range(2, n_days + 2):
+        wc.column_dimensions[get_column_letter(c)].width = 10
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -368,7 +565,8 @@ def main():
             desc = ", ".join(f"{mv}←{col}" for mv, col in mappings)
             print(f"  {zone:12s}  {desc}")
 
-        all_pivot = load_all_files(directory, zone_map)
+        all_pivot    = load_all_files(directory, zone_map)
+        all_pivot_15 = load_all_files_15min(directory, zone_map)
 
         for movement, pivot_data in all_pivot.items():
             days  = list(pivot_data.keys())
@@ -382,7 +580,8 @@ def main():
             xlsx_path = os.path.join(OUTPUT_DIR, f"{stem}.xlsx")
 
             write_csv(pivot_data, days, col, csv_path)
-            build_excel(pivot_data, days, title.replace("\n", " — "), xlsx_path)
+            build_excel(pivot_data, days, title.replace("\n", " — "), xlsx_path,
+                        pivot_15min=all_pivot_15.get(movement))
 
     print(f"\nDone. All files written to '{OUTPUT_DIR}/'")
 
