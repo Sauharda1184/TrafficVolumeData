@@ -1,0 +1,247 @@
+============================================================
+  TRAFFIC VOLUME ANALYZER — USER GUIDE
+============================================================
+  Analyzes bin statistics CSV data for intersection
+  approaches and produces Excel (.xlsx) and CSV outputs
+  with hourly volumes, 15-minute breakdowns, averages,
+  and charts.
+============================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  STEP 0 — ONE-TIME SETUP  (do this only the first time)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. Install Python
+     a. Open your web browser and go to:
+        https://www.python.org/downloads/
+     b. Click the yellow "Download Python 3.x.x" button.
+     c. Run the downloaded installer.
+
+        *** IMPORTANT — on the first screen of the installer,
+        check the box that says "Add Python to PATH"
+        before clicking Install Now. ***
+
+     d. Click "Install Now" and wait for it to finish.
+     e. Click "Close" when done.
+
+  You only need to do Step 0 once. Python stays installed
+  on your computer permanently.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  STEP 1 — ORGANIZE YOUR DATA FILES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Create a folder for each approach you want to analyze.
+  Each folder should contain only the bin statistics CSV
+  files for that approach.
+
+  Naming convention for CSV files (required):
+    <APPROACH>_<Month>_<Day>.csv
+    Examples:  NB_June_1.csv   SB_June_3.csv
+               EB_July_10.csv  WB_June_2.csv
+
+  Example folder structure:
+    C:\Projects\CSAH1_Bennett\
+        NB_DATA\
+            NB_June_1.csv
+            NB_June_2.csv
+            NB_June_3.csv
+            ...
+        SB_DATA\
+            SB_June_1.csv
+            SB_June_2.csv
+            ...
+        EB_DATA\
+            EB_June_1.csv
+            ...
+        WB_DATA\
+            WB_June_1.csv
+            ...
+
+  NOTE: You do not need all four approaches. Use only the
+  ones you have data for.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  STEP 2 — LAUNCH THE PROGRAM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. Open the folder where you saved the script files.
+  2. Double-click  run.bat
+
+  A black command window will appear briefly — this is
+  normal. It installs required packages automatically
+  (only downloads anything new the very first time).
+
+  The Traffic Volume Analyzer window will then open.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  STEP 3 — FILL IN THE ANALYZER WINDOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  The window has four sections:
+
+  ┌──────────────────────────────────────────────────────┐
+  │  A. INTERSECTION NAME                                │
+  │  B. APPROACH DATA DIRECTORIES                        │
+  │  C. OUTPUT FOLDER                                    │
+  │  D. OUTPUT LOG                                       │
+  └──────────────────────────────────────────────────────┘
+
+  ── A. Intersection Name ─────────────────────────────────
+  Type the full name of the intersection.
+  Example:  CSAH 1 (Flying Cloud Dr) at Bennett Place
+
+  ── B. Approach Data Directories ─────────────────────────
+  For each approach you have data for:
+
+    1. Click "Browse" next to that approach (NB, SB, EB, WB).
+    2. Navigate to and select the folder containing the
+       CSV files for that approach.
+    3. The folder path appears in the box.
+
+  Leave any approaches you do not have data for blank.
+
+  ── "Configure Zones" button (optional) ──────────────────
+  After browsing to a folder, the "Configure Zones" button
+  activates. In most cases you do NOT need to click it —
+  the program auto-detects which columns to use for
+  Through, Left, and Right counts.
+
+  Only click "Configure Zones" if:
+    • The auto-detection picks up the wrong zones, OR
+    • Your intersection uses a non-standard naming
+      convention (e.g., shared turn lanes labeled WBTR1
+      where ThroughCount and RightTurnCount must be
+      split manually).
+
+  When the dialog opens:
+    • Each row is a zone found in the folder.
+    • The dropdowns let you choose which column feeds
+      the Through (T), Left (L), and Right (R) counts
+      for that zone.
+    • "Skip" means that zone is ignored for that movement.
+    • "Reset to Auto-Detect" restores the original guesses.
+    • Click "OK — Save Configuration" when done.
+
+  ── C. Output Folder ─────────────────────────────────────
+  This is where all output files will be saved.
+  It defaults to an "output" folder inside the script
+  directory. Click "Browse" to choose a different location.
+
+  ── D. RUN ───────────────────────────────────────────────
+  Click the green "▶ Run Analysis" button.
+
+  The Output Log at the bottom shows progress in real time.
+  Green lines = success.  Red lines = errors.
+
+  When you see:  ✓  Done. All files written to output folder.
+  — the analysis is complete.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  STEP 4 — UNDERSTANDING THE OUTPUT FILES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  For each approach and movement, two files are created:
+
+    NB_T.csv   — Hourly Through volumes, one column per day
+    NB_T.xlsx  — Excel workbook for Northbound Through
+
+    NB_L.csv   — Hourly Left-Turn volumes
+    NB_L.xlsx  — Excel workbook for Northbound Left
+
+    (similarly NB_R, SB_T, SB_L, SB_R, EB_T, etc.)
+
+  ── Inside each .xlsx file ───────────────────────────────
+
+  The workbook contains up to four tabs (sheets):
+
+  1. "Data"
+     Hourly pivot table: rows = hours (00:00–22:00),
+     columns = individual days + an Average column.
+     The Average column (dark gray header) shows the
+     mean across all days for that hour.
+
+  2. "Chart"
+     Line chart of hourly volumes.
+     • Each day is a thin colored line.
+     • The Average is a thick dark dashed line so it
+       stands out as the "typical day" reference curve.
+
+  3. "15-min Data"
+     Same as "Data" but with 15-minute resolution.
+     • Each hour row shows the hourly total by default.
+     • Click the [+] button on the LEFT side of any
+       hour row to expand it and see the four 15-minute
+       readings (HH:00, HH:15, HH:30, HH:45).
+     • Click [-] to collapse it again.
+     • The "1" and "2" buttons in the top-left corner
+       collapse or expand ALL hours at once.
+     • The Average column is included here too.
+
+  4. "15-min Chart"
+     Line chart of all 92 fifteen-minute intervals.
+     Same color scheme as "Chart" but at finer resolution.
+     Average shown as thick dark dashed line.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  COMMON QUESTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Q: The [+]/[-] buttons don't appear in my Excel sheet.
+  A: Click the "Data" tab in the Excel ribbon, then look
+     for the "Outline" group on the right side and click
+     "Show Detail" or check that grouping is enabled.
+     Alternatively, go to:  Data → Group → Auto Outline.
+
+  Q: I only see some of my days in the output.
+  A: Check that all CSV files follow the naming convention:
+       <APPROACH>_<Month>_<Day>.csv
+     Files with different naming (e.g., NB_06_01.csv) will
+     be skipped.
+
+  Q: The "Configure Zones" dialog shows zones I don't
+     recognize or don't want.
+  A: Set their Through, Left, and Right dropdowns all to
+     "Skip". Those zones will then be ignored entirely.
+
+  Q: I get a red error line in the log.
+  A: Take a screenshot and send it for support. The error
+     message usually explains the problem (missing file,
+     wrong column name, etc.).
+
+  Q: Can I run multiple intersections?
+  A: Yes — just point each approach to a different folder.
+     Run the analysis once per intersection, using a
+     different Output Folder each time so files don't
+     overwrite each other.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  QUICK REFERENCE — COLUMN MEANINGS IN "Configure Zones"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Volume         The total vehicle count recorded by the
+                 detector for that zone (standard zones).
+
+  ThroughCount   Through-movement count from a shared
+                 (combo) detector zone.
+
+  LeftTurnCount  Left-turn count from a shared detector.
+
+  RightTurnCount Right-turn count from a shared detector.
+
+  Skip           Ignore this zone for this movement.
+
+  Example — Westbound approach with a shared WBT/WBR lane:
+    Zone   Through        Left    Right
+    WBL1   Volume         Skip    Skip
+    WBT1   Volume         Skip    Skip
+    WBTR1  ThroughCount   Skip    RightTurnCount
+
+============================================================
