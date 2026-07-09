@@ -503,7 +503,7 @@ class App(tk.Tk):
                     self._log(f"  XLSX → {os.path.basename(xlsx_path)}", "ok")
 
             if clean_summary:
-                summary_path = os.path.join(output_dir, "Clean_Summary.csv")
+                summary_path = os.path.join(output_dir, vd.clean_summary_filename(intersection))
                 vd.write_clean_summary_csv(
                     approach_pivots, list(approach_dirs.keys()), summary_path
                 )

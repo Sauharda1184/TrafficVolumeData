@@ -277,6 +277,17 @@ def write_csv(pivot_data, days, col_name, out_path):
 CLEAN_MOVEMENT_ORDER = ["L", "T", "R"]
 
 
+def clean_summary_filename(intersection, when=None):
+    """
+    Build a safe '<Intersection>_<YYYY-MM-DD>.csv' filename for the clean
+    summary export, e.g. 'CSAH_61_Flying_Cloud_Dr_at_College_View_Dr_2026-07-08.csv'.
+    Defaults to today's date (the day the export is run).
+    """
+    when = when or date.today()
+    safe = re.sub(r"[^\w\-]+", "_", intersection).strip("_")
+    return f"{safe}_{when.isoformat()}.csv"
+
+
 def write_clean_summary_csv(approach_pivots, approach_order, out_path,
                              movement_order=CLEAN_MOVEMENT_ORDER):
     """
@@ -728,7 +739,7 @@ def main():
                         pivot_15min=all_pivot_15.get(movement))
 
     if CLEAN_SUMMARY_EXPORT:
-        summary_path = os.path.join(OUTPUT_DIR, "Clean_Summary.csv")
+        summary_path = os.path.join(OUTPUT_DIR, clean_summary_filename(INTERSECTION))
         write_clean_summary_csv(approach_pivots, list(APPROACH_DIRS.keys()), summary_path)
 
     print(f"\nDone. All files written to '{OUTPUT_DIR}/'")
