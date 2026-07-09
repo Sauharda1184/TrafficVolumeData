@@ -277,10 +277,18 @@ class App(tk.Tk):
             relief="flat", padx=8, pady=2, cursor="hand2",
         ).pack(side="left", padx=(6, 0))
 
-        # Clean summary option
+        # Output options
+        self._section(body, "Output Options")
+        self.full_analysis_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            body, text="Full Analysis (per-movement CSV + XLSX with charts)",
+            variable=self.full_analysis_var,
+            bg=BG, fg="#333", font=("Helvetica", 9),
+            activebackground=BG, selectcolor="white",
+        ).pack(anchor="w")
         self.clean_summary_var = tk.BooleanVar(value=False)
         tk.Checkbutton(
-            body, text="Also export Clean Summary (single combined CSV, no charts)",
+            body, text="Clean Summary (single combined workbook, expandable 15-min, no charts)",
             variable=self.clean_summary_var,
             bg=BG, fg="#333", font=("Helvetica", 9),
             activebackground=BG, selectcolor="white",
@@ -438,6 +446,12 @@ class App(tk.Tk):
             messagebox.showwarning("Missing Input",
                                    "Select at least one approach directory.")
             return
+        full_analysis = self.full_analysis_var.get()
+        clean_summary = self.clean_summary_var.get()
+        if not full_analysis and not clean_summary:
+            messagebox.showwarning("Missing Input",
+                                   "Select at least one output option (Full Analysis or Clean Summary).")
+            return
         output_dir = self.output_var.get().strip()
         self.run_btn.configure(state="disabled", text="Running…")
         self.log.configure(state="normal")
@@ -445,18 +459,18 @@ class App(tk.Tk):
         self.log.configure(state="disabled")
         threading.Thread(
             target=self._run_analysis,
-            args=(intersection, approach_dirs, output_dir, self.clean_summary_var.get()),
+            args=(intersection, approach_dirs, output_dir, full_analysis, clean_summary),
             daemon=True,
         ).start()
 
-    def _run_analysis(self, intersection, approach_dirs, output_dir, clean_summary):
+    def _run_analysis(self, intersection, approach_dirs, output_dir, full_analysis, clean_summary):
         try:
             os.makedirs(output_dir, exist_ok=True)
             self._log(f"Intersection : {intersection}", "info")
             self._log(f"Output folder: {output_dir}", "dim")
             self._log("─" * 56, "dim")
 
-            approach_pivots = {}   # {approach: {movement: {day_label: {hour: volume}}}}
+            approach_pivots_15 = {}   # {approach: {movement: {day_label: {"HH:MM": volume}}}}
 
             for approach, directory in approach_dirs.items():
                 self._log(
@@ -485,29 +499,30 @@ class App(tk.Tk):
 
                 all_pivot    = vd.load_all_files(directory, zone_map)
                 all_pivot_15 = vd.load_all_files_15min(directory, zone_map)
-                approach_pivots[approach] = all_pivot
+                approach_pivots_15[approach] = all_pivot_15
 
-                for movement, pivot_data in all_pivot.items():
-                    days      = list(pivot_data.keys())
-                    mv_label  = vd.MOVEMENT_LABELS.get(movement, movement)
-                    a_label   = vd.APPROACH_LABELS.get(approach, approach)
-                    title     = f"{a_label} {mv_label} — {intersection}"
-                    stem      = f"{approach}_{movement}"
-                    csv_path  = os.path.join(output_dir, f"{stem}.csv")
-                    xlsx_path = os.path.join(output_dir, f"{stem}.xlsx")
+                if full_analysis:
+                    for movement, pivot_data in all_pivot.items():
+                        days      = list(pivot_data.keys())
+                        mv_label  = vd.MOVEMENT_LABELS.get(movement, movement)
+                        a_label   = vd.APPROACH_LABELS.get(approach, approach)
+                        title     = f"{a_label} {mv_label} — {intersection}"
+                        stem      = f"{approach}_{movement}"
+                        csv_path  = os.path.join(output_dir, f"{stem}.csv")
+                        xlsx_path = os.path.join(output_dir, f"{stem}.xlsx")
 
-                    vd.write_csv(pivot_data, days, f"{approach}{movement}", csv_path)
-                    self._log(f"  CSV  → {os.path.basename(csv_path)}", "ok")
-                    vd.build_excel(pivot_data, days, title, xlsx_path,
-                                   pivot_15min=all_pivot_15.get(movement))
-                    self._log(f"  XLSX → {os.path.basename(xlsx_path)}", "ok")
+                        vd.write_csv(pivot_data, days, f"{approach}{movement}", csv_path)
+                        self._log(f"  CSV  → {os.path.basename(csv_path)}", "ok")
+                        vd.build_excel(pivot_data, days, title, xlsx_path,
+                                       pivot_15min=all_pivot_15.get(movement))
+                        self._log(f"  XLSX → {os.path.basename(xlsx_path)}", "ok")
 
             if clean_summary:
                 summary_path = os.path.join(output_dir, vd.clean_summary_filename(intersection))
-                vd.write_clean_summary_csv(
-                    approach_pivots, list(approach_dirs.keys()), summary_path
+                vd.build_clean_summary_excel(
+                    approach_pivots_15, list(approach_dirs.keys()), intersection, summary_path
                 )
-                self._log(f"  Clean CSV → {os.path.basename(summary_path)}", "ok")
+                self._log(f"  Clean XLSX → {os.path.basename(summary_path)}", "ok")
 
             self._log("\n" + "─" * 56, "dim")
             self._log("✓  Done. All files written to output folder.", "ok")

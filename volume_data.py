@@ -47,8 +47,12 @@ OUTPUT_DIR = "output"
 # Remove any movements you don't need (e.g. remove "R" to skip right turns).
 MOVEMENTS = ["T", "L", "R"]
 
-# If True, also write a single consolidated "Clean_Summary.csv" combining every
-# approach+movement into one chart-free table (Hour x columns + Total row).
+# If True, write the standard per-approach/movement CSV + XLSX (with charts).
+FULL_ANALYSIS_EXPORT = True
+
+# If True, also write a single consolidated clean summary workbook combining
+# every approach+movement into one chart-free, expandable table (Hour rows
+# with collapsible 15-min detail, one column per approach+movement + Total).
 CLEAN_SUMMARY_EXPORT = False
 
 MOVEMENT_LABELS = {
@@ -279,62 +283,13 @@ CLEAN_MOVEMENT_ORDER = ["L", "T", "R"]
 
 def clean_summary_filename(intersection, when=None):
     """
-    Build a safe '<Intersection>_<YYYY-MM-DD>.csv' filename for the clean
-    summary export, e.g. 'CSAH_61_Flying_Cloud_Dr_at_College_View_Dr_2026-07-08.csv'.
+    Build a safe '<Intersection>_<YYYY-MM-DD>.xlsx' filename for the clean
+    summary export, e.g. 'CSAH_61_Flying_Cloud_Dr_at_College_View_Dr_2026-07-08.xlsx'.
     Defaults to today's date (the day the export is run).
     """
     when = when or date.today()
     safe = re.sub(r"[^\w\-]+", "_", intersection).strip("_")
-    return f"{safe}_{when.isoformat()}.csv"
-
-
-def write_clean_summary_csv(approach_pivots, approach_order, out_path,
-                             movement_order=CLEAN_MOVEMENT_ORDER):
-    """
-    Write a single consolidated, chart-free CSV for one day of data:
-    one row per hour actually present in the source data, one column per
-    approach+movement (e.g. EBL, EBT, EBR, WBL, ...), plus a Total column,
-    and a Total row at the bottom. Meant for quick comparison against
-    consultant-provided counts.
-
-    approach_pivots: {approach: {movement: {day_label: {hour: volume}}}}
-                      — the dict returned by load_all_files() for each approach.
-    approach_order:  list of approach codes controlling column order (e.g. ["EB","WB","NB","SB"]).
-    """
-    columns = [
-        f"{a}{m}"
-        for a in approach_order
-        for m in movement_order
-        if m in approach_pivots.get(a, {})
-    ]
-
-    # Sum every day/file found for each approach+movement into one hourly total.
-    col_hourly = defaultdict(lambda: defaultdict(int))
-    for a in approach_order:
-        for m in movement_order:
-            mv_data = approach_pivots.get(a, {}).get(m)
-            if not mv_data:
-                continue
-            col = f"{a}{m}"
-            for hourly in mv_data.values():
-                for hour, val in hourly.items():
-                    col_hourly[col][hour] += val
-
-    hours_present = sorted({h for hourly in col_hourly.values() for h in hourly})
-
-    with open(out_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Hour"] + columns + ["Total"])
-        col_totals = defaultdict(int)
-        for hour in hours_present:
-            row_vals = [col_hourly[c].get(hour, 0) for c in columns]
-            for c, v in zip(columns, row_vals):
-                col_totals[c] += v
-            writer.writerow([f"{hour:02d}:00"] + row_vals + [sum(row_vals)])
-        totals_row = [col_totals[c] for c in columns]
-        writer.writerow(["Total"] + totals_row + [sum(totals_row)])
-
-    print(f"  Clean CSV → {out_path}")
+    return f"{safe}_{when.isoformat()}.xlsx"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -694,13 +649,173 @@ def _build_15min_chart_sheet(wb, pivot_15min, days, title, n_days):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Clean summary output (single day, all approaches, no charts)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_clean_summary_excel(approach_pivots_15, approach_order, intersection, out_path,
+                               movement_order=CLEAN_MOVEMENT_ORDER):
+    """
+    Build a single-sheet, chart-free Excel workbook for one day of data across
+    every approach: one summary row per hour actually present in the source
+    data, with four collapsible 15-minute detail rows beneath it (click [+] to
+    expand), one column per approach+movement (e.g. EBL, EBT, EBR, WBL, ...),
+    plus a Total column and a Total row. Meant for quick comparison against
+    consultant-provided counts.
+
+    approach_pivots_15: {approach: {movement: {day_label: {"HH:MM": volume}}}}
+                         — the dict returned by load_all_files_15min() for each approach.
+    approach_order:     list of approach codes controlling column order (e.g. ["EB","WB","NB","SB"]).
+    """
+    columns = [
+        f"{a}{m}"
+        for a in approach_order
+        for m in movement_order
+        if m in approach_pivots_15.get(a, {})
+    ]
+
+    # Sum every day/file found for each approach+movement into one combined interval map.
+    col_interval = defaultdict(lambda: defaultdict(int))
+    for a in approach_order:
+        for m in movement_order:
+            mv_data = approach_pivots_15.get(a, {}).get(m)
+            if not mv_data:
+                continue
+            col = f"{a}{m}"
+            for iv_data in mv_data.values():
+                for interval, val in iv_data.items():
+                    col_interval[col][interval] += val
+
+    hours_present = sorted({int(iv[:2]) for ivs in col_interval.values() for iv in ivs})
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Clean Summary"
+    total_col = len(columns) + 2
+
+    # Summary rows appear ABOVE their detail rows so [+] sits on the summary row
+    ws.sheet_properties.outlinePr.summaryBelow = False
+    ws.sheet_properties.outlinePr.summaryRight = False
+
+    # Title row
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_col)
+    tc           = ws.cell(row=1, column=1, value=f"{intersection} — Clean Summary")
+    tc.font      = Font(bold=True, size=13, color="FFFFFF")
+    tc.alignment = Alignment(horizontal="center", vertical="center")
+    tc.fill      = PatternFill("solid", fgColor="1F4E79")
+    ws.row_dimensions[1].height = 24
+
+    # Instruction row
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=total_col)
+    ic           = ws.cell(row=2, column=1,
+                           value="Click [+] on the left margin to expand an hour into its four 15-minute intervals")
+    ic.font      = Font(size=9, italic=True, color="444444")
+    ic.alignment = Alignment(horizontal="center")
+    ic.fill      = PatternFill("solid", fgColor="EBF3FB")
+    ws.row_dimensions[2].height = 16
+
+    # Header row
+    hdr_fill  = PatternFill("solid", fgColor="2E75B6")
+    hdr_font  = Font(bold=True, color="FFFFFF", size=10)
+    tot_hfill = PatternFill("solid", fgColor="404040")
+    h = ws.cell(row=3, column=1, value="Hour / Interval")
+    h.font = hdr_font; h.fill = hdr_fill
+    h.alignment = Alignment(horizontal="center"); h.border = _thin_border()
+    for c, col in enumerate(columns, start=2):
+        cell = ws.cell(row=3, column=c, value=col)
+        cell.font = hdr_font; cell.fill = hdr_fill
+        cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
+    thdr = ws.cell(row=3, column=total_col, value="Total")
+    thdr.font = Font(bold=True, color="FFFFFF", size=10)
+    thdr.fill = tot_hfill
+    thdr.alignment = Alignment(horizontal="center"); thdr.border = _thin_border()
+
+    sum_fill   = PatternFill("solid", fgColor="D6E4F0")
+    sum_font   = Font(bold=True, size=10)
+    det_font   = Font(size=9)
+    det_fill_a = PatternFill("solid", fgColor="FFFFFF")
+    det_fill_b = PatternFill("solid", fgColor="F5F9FD")
+    tot_fill   = PatternFill("solid", fgColor="1F4E79")
+    tot_font   = Font(bold=True, color="FFFFFF", size=10)
+    tot_sfill  = PatternFill("solid", fgColor="E0E0E0")   # summary row total cell
+    tot_dfill  = PatternFill("solid", fgColor="F0F0F0")   # detail row total cell
+    tot_sfont  = Font(bold=True, size=10, color="202020")
+    tot_dfont  = Font(size=9, color="202020")
+
+    r = 4
+    col_grand_totals = defaultdict(int)
+    for hour in hours_present:
+        # ── Summary row (hourly total) ────────────────────────────────────────
+        sc = ws.cell(row=r, column=1, value=f"{hour:02d}:00")
+        sc.font = sum_font; sc.fill = sum_fill
+        sc.alignment = Alignment(horizontal="center"); sc.border = _thin_border()
+        hour_vals = []
+        for c, col in enumerate(columns, start=2):
+            val = sum(col_interval[col].get(f"{hour:02d}:{m:02d}", 0) for m in (0, 15, 30, 45))
+            hour_vals.append(val)
+            cell = ws.cell(row=r, column=c, value=val)
+            cell.font = sum_font; cell.fill = sum_fill
+            cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
+        for col, v in zip(columns, hour_vals):
+            col_grand_totals[col] += v
+        stc = ws.cell(row=r, column=total_col, value=sum(hour_vals))
+        stc.font = tot_sfont; stc.fill = tot_sfill
+        stc.alignment = Alignment(horizontal="center"); stc.border = _thin_border()
+        r += 1
+
+        # ── Detail rows (collapsed by default) ───────────────────────────────
+        for i, m in enumerate((0, 15, 30, 45)):
+            interval = f"{hour:02d}:{m:02d}"
+            fill = det_fill_b if i % 2 else det_fill_a
+            dc = ws.cell(row=r, column=1, value=interval)
+            dc.font = det_font; dc.fill = fill
+            dc.alignment = Alignment(horizontal="center", indent=2); dc.border = _thin_border()
+            iv_vals = []
+            for c, col in enumerate(columns, start=2):
+                val = col_interval[col].get(interval, 0)
+                iv_vals.append(val)
+                cell = ws.cell(row=r, column=c, value=val)
+                cell.font = det_font; cell.fill = fill
+                cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
+            dtc = ws.cell(row=r, column=total_col, value=sum(iv_vals))
+            dtc.font = tot_dfont; dtc.fill = tot_dfill
+            dtc.alignment = Alignment(horizontal="center"); dtc.border = _thin_border()
+            ws.row_dimensions[r].outline_level = 1
+            ws.row_dimensions[r].hidden        = True
+            r += 1
+
+    # Total row
+    tc2 = ws.cell(row=r, column=1, value="Total")
+    tc2.font = tot_font; tc2.fill = tot_fill
+    tc2.alignment = Alignment(horizontal="center"); tc2.border = _thin_border()
+    grand_total = 0
+    for c, col in enumerate(columns, start=2):
+        val = col_grand_totals[col]
+        grand_total += val
+        cell = ws.cell(row=r, column=c, value=val)
+        cell.font = tot_font; cell.fill = tot_fill
+        cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
+    gtc = ws.cell(row=r, column=total_col, value=grand_total)
+    gtc.font = Font(bold=True, color="FFFFFF", size=10)
+    gtc.fill = PatternFill("solid", fgColor="404040")
+    gtc.alignment = Alignment(horizontal="center"); gtc.border = _thin_border()
+
+    ws.column_dimensions["A"].width = 15
+    for c in range(2, total_col + 1):
+        ws.column_dimensions[get_column_letter(c)].width = 11
+    ws.freeze_panes = "B4"
+
+    wb.save(out_path)
+    print(f"  Clean XLSX → {out_path}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    approach_pivots = {}   # {approach: {movement: {day_label: {hour: volume}}}}
+    approach_pivots_15 = {}   # {approach: {movement: {day_label: {"HH:MM": volume}}}}
 
     for approach, directory in APPROACH_DIRS.items():
         print(f"\n{'─'*50}")
@@ -721,26 +836,28 @@ def main():
 
         all_pivot    = load_all_files(directory, zone_map)
         all_pivot_15 = load_all_files_15min(directory, zone_map)
-        approach_pivots[approach] = all_pivot
+        approach_pivots_15[approach] = all_pivot_15
 
-        for movement, pivot_data in all_pivot.items():
-            days  = list(pivot_data.keys())
-            label = MOVEMENT_LABELS.get(movement, movement)
-            approach_label = APPROACH_LABELS.get(approach, approach)
-            title = f"{approach_label} {label}\n{INTERSECTION}"
-            col   = f"{approach}{movement}"
-            stem  = f"{approach}_{movement}"
+        if FULL_ANALYSIS_EXPORT:
+            for movement, pivot_data in all_pivot.items():
+                days  = list(pivot_data.keys())
+                label = MOVEMENT_LABELS.get(movement, movement)
+                approach_label = APPROACH_LABELS.get(approach, approach)
+                title = f"{approach_label} {label}\n{INTERSECTION}"
+                col   = f"{approach}{movement}"
+                stem  = f"{approach}_{movement}"
 
-            csv_path  = os.path.join(OUTPUT_DIR, f"{stem}.csv")
-            xlsx_path = os.path.join(OUTPUT_DIR, f"{stem}.xlsx")
+                csv_path  = os.path.join(OUTPUT_DIR, f"{stem}.csv")
+                xlsx_path = os.path.join(OUTPUT_DIR, f"{stem}.xlsx")
 
-            write_csv(pivot_data, days, col, csv_path)
-            build_excel(pivot_data, days, title.replace("\n", " — "), xlsx_path,
-                        pivot_15min=all_pivot_15.get(movement))
+                write_csv(pivot_data, days, col, csv_path)
+                build_excel(pivot_data, days, title.replace("\n", " — "), xlsx_path,
+                            pivot_15min=all_pivot_15.get(movement))
 
     if CLEAN_SUMMARY_EXPORT:
         summary_path = os.path.join(OUTPUT_DIR, clean_summary_filename(INTERSECTION))
-        write_clean_summary_csv(approach_pivots, list(APPROACH_DIRS.keys()), summary_path)
+        build_clean_summary_excel(approach_pivots_15, list(APPROACH_DIRS.keys()),
+                                   INTERSECTION, summary_path)
 
     print(f"\nDone. All files written to '{OUTPUT_DIR}/'")
 
