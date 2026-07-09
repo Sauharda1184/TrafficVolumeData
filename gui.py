@@ -277,6 +277,15 @@ class App(tk.Tk):
             relief="flat", padx=8, pady=2, cursor="hand2",
         ).pack(side="left", padx=(6, 0))
 
+        # Clean summary option
+        self.clean_summary_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            body, text="Also export Clean Summary (single combined CSV, no charts)",
+            variable=self.clean_summary_var,
+            bg=BG, fg="#333", font=("Helvetica", 9),
+            activebackground=BG, selectcolor="white",
+        ).pack(anchor="w", pady=(0, 4))
+
         # Run button
         self.run_btn = tk.Button(
             body, text="▶  Run Analysis",
@@ -436,16 +445,18 @@ class App(tk.Tk):
         self.log.configure(state="disabled")
         threading.Thread(
             target=self._run_analysis,
-            args=(intersection, approach_dirs, output_dir),
+            args=(intersection, approach_dirs, output_dir, self.clean_summary_var.get()),
             daemon=True,
         ).start()
 
-    def _run_analysis(self, intersection, approach_dirs, output_dir):
+    def _run_analysis(self, intersection, approach_dirs, output_dir, clean_summary):
         try:
             os.makedirs(output_dir, exist_ok=True)
             self._log(f"Intersection : {intersection}", "info")
             self._log(f"Output folder: {output_dir}", "dim")
             self._log("─" * 56, "dim")
+
+            approach_pivots = {}   # {approach: {movement: {day_label: {hour: volume}}}}
 
             for approach, directory in approach_dirs.items():
                 self._log(
@@ -474,6 +485,7 @@ class App(tk.Tk):
 
                 all_pivot    = vd.load_all_files(directory, zone_map)
                 all_pivot_15 = vd.load_all_files_15min(directory, zone_map)
+                approach_pivots[approach] = all_pivot
 
                 for movement, pivot_data in all_pivot.items():
                     days      = list(pivot_data.keys())
@@ -489,6 +501,13 @@ class App(tk.Tk):
                     vd.build_excel(pivot_data, days, title, xlsx_path,
                                    pivot_15min=all_pivot_15.get(movement))
                     self._log(f"  XLSX → {os.path.basename(xlsx_path)}", "ok")
+
+            if clean_summary:
+                summary_path = os.path.join(output_dir, "Clean_Summary.csv")
+                vd.write_clean_summary_csv(
+                    approach_pivots, list(approach_dirs.keys()), summary_path
+                )
+                self._log(f"  Clean CSV → {os.path.basename(summary_path)}", "ok")
 
             self._log("\n" + "─" * 56, "dim")
             self._log("✓  Done. All files written to output folder.", "ok")

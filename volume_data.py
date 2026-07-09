@@ -46,6 +46,10 @@ OUTPUT_DIR = "output"
 # Remove any movements you don't need (e.g. remove "R" to skip right turns).
 MOVEMENTS = ["T", "L", "R"]
 
+# If True, also write a single consolidated "Clean_Summary.csv" combining every
+# approach+movement into one chart-free table (Hour x columns + Total row).
+CLEAN_SUMMARY_EXPORT = False
+
 MOVEMENT_LABELS = {
     "T": "Through",
     "L": "Left Turn",
@@ -266,6 +270,59 @@ def write_csv(pivot_data, days, col_name, out_path):
         avg_total = round(sum(totals) / n, 1) if n else 0
         writer.writerow(["Total"] + totals + [avg_total])
     print(f"  CSV  → {out_path}")
+
+
+# Column order used within each approach in the clean summary export.
+CLEAN_MOVEMENT_ORDER = ["L", "T", "R"]
+
+
+def write_clean_summary_csv(approach_pivots, approach_order, out_path,
+                             movement_order=CLEAN_MOVEMENT_ORDER):
+    """
+    Write a single consolidated, chart-free CSV for one day of data:
+    one row per hour actually present in the source data, one column per
+    approach+movement (e.g. EBL, EBT, EBR, WBL, ...), plus a Total column,
+    and a Total row at the bottom. Meant for quick comparison against
+    consultant-provided counts.
+
+    approach_pivots: {approach: {movement: {day_label: {hour: volume}}}}
+                      — the dict returned by load_all_files() for each approach.
+    approach_order:  list of approach codes controlling column order (e.g. ["EB","WB","NB","SB"]).
+    """
+    columns = [
+        f"{a}{m}"
+        for a in approach_order
+        for m in movement_order
+        if m in approach_pivots.get(a, {})
+    ]
+
+    # Sum every day/file found for each approach+movement into one hourly total.
+    col_hourly = defaultdict(lambda: defaultdict(int))
+    for a in approach_order:
+        for m in movement_order:
+            mv_data = approach_pivots.get(a, {}).get(m)
+            if not mv_data:
+                continue
+            col = f"{a}{m}"
+            for hourly in mv_data.values():
+                for hour, val in hourly.items():
+                    col_hourly[col][hour] += val
+
+    hours_present = sorted({h for hourly in col_hourly.values() for h in hourly})
+
+    with open(out_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Hour"] + columns + ["Total"])
+        col_totals = defaultdict(int)
+        for hour in hours_present:
+            row_vals = [col_hourly[c].get(hour, 0) for c in columns]
+            for c, v in zip(columns, row_vals):
+                col_totals[c] += v
+            writer.writerow([f"{hour:02d}:00"] + row_vals + [sum(row_vals)])
+        totals_row = [col_totals[c] for c in columns]
+        writer.writerow(["Total"] + totals_row + [sum(totals_row)])
+
+    print(f"  Clean CSV → {out_path}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -631,6 +688,8 @@ def _build_15min_chart_sheet(wb, pivot_15min, days, title, n_days):
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+    approach_pivots = {}   # {approach: {movement: {day_label: {hour: volume}}}}
+
     for approach, directory in APPROACH_DIRS.items():
         print(f"\n{'─'*50}")
         print(f"Approach: {approach}  ({directory})")
@@ -650,6 +709,7 @@ def main():
 
         all_pivot    = load_all_files(directory, zone_map)
         all_pivot_15 = load_all_files_15min(directory, zone_map)
+        approach_pivots[approach] = all_pivot
 
         for movement, pivot_data in all_pivot.items():
             days  = list(pivot_data.keys())
@@ -665,6 +725,10 @@ def main():
             write_csv(pivot_data, days, col, csv_path)
             build_excel(pivot_data, days, title.replace("\n", " — "), xlsx_path,
                         pivot_15min=all_pivot_15.get(movement))
+
+    if CLEAN_SUMMARY_EXPORT:
+        summary_path = os.path.join(OUTPUT_DIR, "Clean_Summary.csv")
+        write_clean_summary_csv(approach_pivots, list(APPROACH_DIRS.keys()), summary_path)
 
     print(f"\nDone. All files written to '{OUTPUT_DIR}/'")
 
