@@ -652,30 +652,44 @@ def _build_15min_chart_sheet(wb, pivot_15min, days, title, n_days):
 # Clean summary output (single day, all approaches, no charts)
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Fixed approach column order for the clean summary, regardless of the order
+# approaches were browsed/configured in: Hour, EBL EBT EBR WBL WBT WBR NBL NBT NBR SBL SBT SBR, Total
+CLEAN_APPROACH_ORDER = ["EB", "WB", "NB", "SB"]
+
+
 def build_clean_summary_excel(approach_pivots_15, approach_order, intersection, out_path,
                                movement_order=CLEAN_MOVEMENT_ORDER):
     """
     Build a single-sheet, chart-free Excel workbook for one day of data across
     every approach: one summary row per hour actually present in the source
     data, with four collapsible 15-minute detail rows beneath it (click [+] to
-    expand), one column per approach+movement (e.g. EBL, EBT, EBR, WBL, ...),
-    plus a Total column and a Total row. Meant for quick comparison against
+    expand), one column per approach+movement (always ordered EB, WB, NB, SB
+    regardless of caller order — e.g. EBL, EBT, EBR, WBL, ...), plus a Total
+    column and a Total row. Meant for quick comparison against
     consultant-provided counts.
 
     approach_pivots_15: {approach: {movement: {day_label: {"HH:MM": volume}}}}
                          — the dict returned by load_all_files_15min() for each approach.
-    approach_order:     list of approach codes controlling column order (e.g. ["EB","WB","NB","SB"]).
+    approach_order:     approaches actually present in this run; any not in
+                         CLEAN_APPROACH_ORDER are appended at the end in the
+                         order given.
     """
+    ordered_approaches = sorted(
+        approach_order,
+        key=lambda a: (CLEAN_APPROACH_ORDER.index(a)
+                        if a in CLEAN_APPROACH_ORDER else len(CLEAN_APPROACH_ORDER))
+    )
+
     columns = [
         f"{a}{m}"
-        for a in approach_order
+        for a in ordered_approaches
         for m in movement_order
         if m in approach_pivots_15.get(a, {})
     ]
 
     # Sum every day/file found for each approach+movement into one combined interval map.
     col_interval = defaultdict(lambda: defaultdict(int))
-    for a in approach_order:
+    for a in ordered_approaches:
         for m in movement_order:
             mv_data = approach_pivots_15.get(a, {}).get(m)
             if not mv_data:
