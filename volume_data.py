@@ -120,6 +120,9 @@ def config_to_zone_map(zone_config):
             zone_map[zone] = mappings
     return zone_map
 
+'''
+Scans every CSV in a folder, finds all distinct ZoneName values and pattern-matches them
+to guess which movement each zone feeds and which CSV column holds the Counts.'''
 
 def discover_zones(directory, approach):
     """
@@ -173,6 +176,10 @@ def day_label(filename):
     parts = stem.split("_")
     return f"{parts[-2].capitalize()}-{parts[-1]}"
 
+'''
+This Function reads one day's CSV and sum volumes into hourly
+buckets per movement, using whatever zone map was resolved in discover_zones
+and configure_zones'''
 
 def process_file(filepath, zone_map):
     """
@@ -197,6 +204,8 @@ def process_file(filepath, zone_map):
 
     return {mv: dict(hours) for mv, hours in hourly.items()}
 
+'''
+This runs across every CSV in the folder (one per day, named like SB_June_1.csv)'''
 
 def load_all_files(directory, zone_map):
     """
