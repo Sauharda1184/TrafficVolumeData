@@ -49,6 +49,7 @@ class ZoneConfigDialog(tk.Toplevel):
       WBL1   Through→Skip          Left→Volume        Right→Skip
     """
 
+    # Builds the modal dialog window and populates it with one row per zone found in the directory.
     def __init__(self, parent, approach, directory, existing_config):
         super().__init__(parent)
         self.title(f"Configure Zones — {approach} ({APPROACH_FULL.get(approach, approach)})")
@@ -66,6 +67,7 @@ class ZoneConfigDialog(tk.Toplevel):
 
     # ── Build UI ─────────────────────────────────────────────────────────────
 
+    # Lays out the header, scrollable zone table, and OK/Cancel/Reset buttons.
     def _build(self, existing_config):
         # Header
         hdr = tk.Frame(self, bg=HEADER_BG)
@@ -170,11 +172,13 @@ class ZoneConfigDialog(tk.Toplevel):
         h = min(80 + len(all_zones) * 34, 600)
         self.geometry(f"720x{h}")
 
+    # Resets every combobox back to the auto-detected column assignment.
     def _reset(self, auto_config):
         for zone, mv_vars in self._row_vars.items():
             for mv, var in mv_vars.items():
                 var.set(auto_config.get(zone, {}).get(mv, "Skip"))
 
+    # Reads the current combobox selections into self.result and closes the dialog.
     def _ok(self):
         self.result = {
             zone: {mv: var.get() for mv, var in mv_vars.items()}
@@ -182,6 +186,7 @@ class ZoneConfigDialog(tk.Toplevel):
         }
         self.destroy()
 
+    # Centers this dialog window over its parent window.
     def _center(self, parent):
         self.update_idletasks()
         x = parent.winfo_x() + (parent.winfo_width()  - self.winfo_width())  // 2
@@ -189,6 +194,7 @@ class ZoneConfigDialog(tk.Toplevel):
         self.geometry(f"+{x}+{y}")
 
 
+# Converts a zone_map {zone: [(mv, col)]} into the dialog's per-zone config format.
 def _zone_map_to_config(zone_map, all_zones):
     """Convert zone_map {zone: [(mv, col)]} to config {zone: {mv: col}} for all zones."""
     config = {zone: {mv: "Skip" for mv in MOVEMENTS} for zone in all_zones}
@@ -202,6 +208,7 @@ def _zone_map_to_config(zone_map, all_zones):
 # ── Main Application ──────────────────────────────────────────────────────────
 
 class App(tk.Tk):
+    # Sets up the main window and builds the whole UI.
     def __init__(self):
         super().__init__()
         self.title("Traffic Volume Analyzer")
@@ -214,6 +221,7 @@ class App(tk.Tk):
 
     # ── Layout ───────────────────────────────────────────────────────────────
 
+    # Lays out every section of the main window: header, inputs, output options, run button, and log.
     def _build_ui(self):
         # Header
         hdr = tk.Frame(self, bg=HEADER_BG)
@@ -324,6 +332,7 @@ class App(tk.Tk):
         self.log.tag_config("info", foreground=LOG_INFO)
         self.log.tag_config("dim",  foreground="#6c7086")
 
+    # Draws a small blue section-header label with an underline rule beneath it.
     def _section(self, parent, text):
         tk.Label(
             parent, text=text.upper(),
@@ -332,6 +341,7 @@ class App(tk.Tk):
         ).pack(anchor="w", pady=(8, 2))
         tk.Frame(parent, bg=ACCENT, height=1).pack(fill="x", pady=(0, 6))
 
+    # Builds one approach's row: label, directory entry, Browse button, and Configure Zones button.
     def _approach_row(self, parent, approach):
         row = tk.Frame(parent, bg=BG)
         row.pack(fill="x", pady=3)
@@ -376,6 +386,7 @@ class App(tk.Tk):
 
     # ── Browsing ─────────────────────────────────────────────────────────────
 
+    # Opens a folder picker for one approach and resets its saved zone config to auto-detect.
     def _browse_approach(self, approach):
         path = filedialog.askdirectory(
             title=f"Select {approach} ({APPROACH_FULL[approach]}) data folder"
@@ -389,11 +400,13 @@ class App(tk.Tk):
         self._cfg_buttons[approach].configure(state="normal", bg=ACCENT)
         self._update_cfg_label(approach)
 
+    # Opens a folder picker for the output directory.
     def _browse_output(self):
         path = filedialog.askdirectory(title="Select output folder")
         if path:
             self.output_var.set(path)
 
+    # Opens the ZoneConfigDialog for one approach and saves the result if the user clicks OK.
     def _open_zone_config(self, approach):
         directory = self.dir_vars[approach].get().strip()
         if not directory or not os.path.isdir(directory):
@@ -407,6 +420,7 @@ class App(tk.Tk):
             self._zone_configs[approach] = dlg.result
             self._update_cfg_label(approach)
 
+    # Updates the "Custom (N assignments)" / "Auto-detect on run" status label next to an approach row.
     def _update_cfg_label(self, approach):
         if approach in self._zone_configs:
             cfg   = self._zone_configs[approach]
@@ -424,6 +438,7 @@ class App(tk.Tk):
 
     # ── Logging ──────────────────────────────────────────────────────────────
 
+    # Appends one line to the log text widget, optionally colored by tag (ok/err/info/dim).
     def _log(self, msg, tag=""):
         self.log.configure(state="normal")
         self.log.insert("end", msg + "\n", tag)
@@ -432,6 +447,7 @@ class App(tk.Tk):
 
     # ── Run ──────────────────────────────────────────────────────────────────
 
+    # Validates the form inputs, clears the log, and kicks off _run_analysis() on a background thread.
     def _run(self):
         intersection = self.intersection_var.get().strip()
         if not intersection:
@@ -463,70 +479,16 @@ class App(tk.Tk):
             daemon=True,
         ).start()
 
+    # Runs the shared pipeline (volume_data.run_pipeline) on a background thread, streaming progress to the log.
     def _run_analysis(self, intersection, approach_dirs, output_dir, full_analysis, clean_summary):
         try:
-            os.makedirs(output_dir, exist_ok=True)
-            self._log(f"Intersection : {intersection}", "info")
-            self._log(f"Output folder: {output_dir}", "dim")
-            self._log("─" * 56, "dim")
-
-            approach_pivots_15 = {}   # {approach: {movement: {day_label: {"HH:MM": volume}}}}
-
-            for approach, directory in approach_dirs.items():
-                self._log(
-                    f"\n▸ {approach} ({vd.APPROACH_LABELS.get(approach, approach)})"
-                    f"  ← {directory}", "info"
-                )
-                if not os.path.isdir(directory):
-                    self._log("  [SKIP] Directory not found.", "err")
-                    continue
-
-                # Use saved config or auto-detect
-                if approach in self._zone_configs:
-                    zone_map = vd.config_to_zone_map(self._zone_configs[approach])
-                    self._log("  Using custom zone configuration:", "dim")
-                else:
-                    zone_map = vd.discover_zones(directory, approach)
-                    self._log("  Using auto-detected zone configuration:", "dim")
-
-                if not zone_map:
-                    self._log("  [SKIP] No active zone assignments found.", "err")
-                    continue
-
-                for zone, mappings in zone_map.items():
-                    desc = "  +  ".join(f"{mv}←{col}" for mv, col in mappings)
-                    self._log(f"  {zone:14s}  {desc}", "dim")
-
-                all_pivot    = vd.load_all_files(directory, zone_map)
-                all_pivot_15 = vd.load_all_files_15min(directory, zone_map)
-                approach_pivots_15[approach] = all_pivot_15
-
-                if full_analysis:
-                    for movement, pivot_data in all_pivot.items():
-                        days      = list(pivot_data.keys())
-                        mv_label  = vd.MOVEMENT_LABELS.get(movement, movement)
-                        a_label   = vd.APPROACH_LABELS.get(approach, approach)
-                        title     = f"{a_label} {mv_label} — {intersection}"
-                        stem      = f"{approach}_{movement}"
-                        csv_path  = os.path.join(output_dir, f"{stem}.csv")
-                        xlsx_path = os.path.join(output_dir, f"{stem}.xlsx")
-
-                        vd.write_csv(pivot_data, days, f"{approach}{movement}", csv_path)
-                        self._log(f"  CSV  → {os.path.basename(csv_path)}", "ok")
-                        vd.build_excel(pivot_data, days, title, xlsx_path,
-                                       pivot_15min=all_pivot_15.get(movement))
-                        self._log(f"  XLSX → {os.path.basename(xlsx_path)}", "ok")
-
-            if clean_summary:
-                summary_path = os.path.join(output_dir, vd.clean_summary_filename(intersection))
-                vd.build_clean_summary_excel(
-                    approach_pivots_15, list(approach_dirs.keys()), intersection, summary_path
-                )
-                self._log(f"  Clean XLSX → {os.path.basename(summary_path)}", "ok")
-
-            self._log("\n" + "─" * 56, "dim")
-            self._log("✓  Done. All files written to output folder.", "ok")
-
+            vd.run_pipeline(
+                intersection, approach_dirs, output_dir,
+                zone_configs=self._zone_configs,
+                full_analysis=full_analysis,
+                clean_summary=clean_summary,
+                log=self._log,
+            )
         except Exception as e:
             self._log(f"\n✗  Error: {e}", "err")
         finally:
@@ -534,6 +496,7 @@ class App(tk.Tk):
 
     # ── Centering ────────────────────────────────────────────────────────────
 
+    # Centers the main window on the screen.
     def _center(self):
         self.update_idletasks()
         w = self.winfo_width()

@@ -72,7 +72,7 @@ APPROACH_LABELS = {
 # Styling constants (match the existing _GRAPH.png palette)
 # ─────────────────────────────────────────────────────────────────────────────
 
-HOURS      = list(range(23))
+HOURS       = list(range(23))
 HOUR_LABELS = [f"{h:02d}:00" for h in HOURS]
 INTERVALS   = [f"{h:02d}:{m:02d}" for h in range(23) for m in (0, 15, 30, 45)]
 
@@ -80,7 +80,6 @@ DAY_COLORS = [
     "e6194b", "3cb44b", "4363d8", "f58231", "911eb4",
     "42d4f4", "f032e6", "a3c832", "f4a8c0", "469990",
 ]
-
 
 # Columns used when a zone covers multiple movements (combo zones like WBTR1)
 COMBO_COLUMNS = {
@@ -93,6 +92,7 @@ COMBO_COLUMNS = {
 # Data processing
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Scans every CSV in a folder and collects every distinct ZoneName found.
 def scan_all_zones(directory):
     """Return sorted list of every unique ZoneName found across all CSVs in directory."""
     zones = set()
@@ -106,9 +106,10 @@ def scan_all_zones(directory):
     return sorted(zones)
 
 
+# Converts the GUI's per-zone column choices into the zone_map format the processing functions expect.
 def config_to_zone_map(zone_config):
     """
-    Convert GUI zone config to the zone_map format used by process_file().
+    Convert GUI zone config to the zone_map format used by process_file_15min().
 
     zone_config: {zone_name: {"T": col_or_None, "L": col_or_None, "R": col_or_None}}
     Returns:     {zone_name: [(movement, column), ...]}   (only non-Skip entries)
@@ -120,10 +121,9 @@ def config_to_zone_map(zone_config):
             zone_map[zone] = mappings
     return zone_map
 
-'''
-Scans every CSV in a folder, finds all distinct ZoneName values and pattern-matches them
-to guess which movement each zone feeds and which CSV column holds the Counts.'''
 
+# Scans every CSV in a folder, finds all distinct ZoneName values, and pattern-matches them
+# to guess which movement each zone feeds and which CSV column holds the counts.
 def discover_zones(directory, approach):
     """
     Scan all CSV files in *directory* and return a zone map:
@@ -166,6 +166,7 @@ def discover_zones(directory, approach):
     return zone_map
 
 
+# Converts a data filename into a short, readable day label for column headers.
 def day_label(filename):
     """
     Convert a filename to a readable day label.
@@ -176,59 +177,14 @@ def day_label(filename):
     parts = stem.split("_")
     return f"{parts[-2].capitalize()}-{parts[-1]}"
 
-'''
-This Function reads one day's CSV and sum volumes into hourly
-buckets per movement, using whatever zone map was resolved in discover_zones
-and configure_zones'''
 
-def process_file(filepath, zone_map):
-    """
-    Read one CSV file and return hourly totals per movement.
-    zone_map: { zone_name: [(movement, column), ...] }
-
-    Returns: {movement: {hour: total_volume}}
-    """
-    hourly = defaultdict(lambda: defaultdict(int))
-
-    with open(filepath, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            zone = row.get("ZoneName", "").strip()
-            if zone not in zone_map:
-                continue
-            ts   = row["TimeStamp"].strip()
-            hour = int(ts[11:13])
-            for movement, column in zone_map[zone]:
-                value = int(float(row.get(column, 0) or 0))
-                hourly[movement][hour] += value
-
-    return {mv: dict(hours) for mv, hours in hourly.items()}
-
-'''
-This runs across every CSV in the folder (one per day, named like SB_June_1.csv)'''
-
-def load_all_files(directory, zone_map):
-    """
-    Process every CSV in *directory* and return pivoted data per movement.
-
-    Returns: {movement: {day_label: {hour: volume}}}
-    """
-    pivot = defaultdict(dict)
-
-    for fname in sorted(Path(directory).glob("*.csv"),
-                        key=lambda p: [int(x) if x.isdigit() else x
-                                       for x in re.split(r"(\d+)", p.stem)]):
-        label     = day_label(fname.name)
-        file_data = process_file(fname, zone_map)
-        for movement, hourly in file_data.items():
-            pivot[movement][label] = hourly
-
-    return dict(pivot)
-
-
+# Reads one day's CSV and sums volumes into 15-minute buckets per movement,
+# using whatever zone map was resolved by discover_zones() or a custom config.
 def process_file_15min(filepath, zone_map):
     """
     Read one CSV file and return raw 15-minute interval totals per movement.
+    zone_map: { zone_name: [(movement, column), ...] }
+
     Returns: {movement: {"HH:MM": total_volume}}
     """
     intervals = defaultdict(lambda: defaultdict(int))
@@ -248,6 +204,7 @@ def process_file_15min(filepath, zone_map):
     return {mv: dict(ivs) for mv, ivs in intervals.items()}
 
 
+# Runs process_file_15min() across every CSV in a folder (one per day, named like SB_June_1.csv).
 def load_all_files_15min(directory, zone_map):
     """
     Process every CSV in *directory* and return pivoted 15-min data per movement.
@@ -266,10 +223,32 @@ def load_all_files_15min(directory, zone_map):
     return dict(pivot)
 
 
+# Derives hourly totals from a 15-minute pivot, so the hourly and 15-minute
+# views always come from a single source of truth instead of two separate
+# read-and-aggregate passes over the CSVs.
+def hourly_from_15min(pivot_15min):
+    """
+    Sum each hour's four quarter-hour intervals to build the hourly pivot.
+    pivot_15min: {movement: {day_label: {"HH:MM": volume}}}
+    Returns:     {movement: {day_label: {hour: volume}}}
+    """
+    hourly = {}
+    for movement, day_data in pivot_15min.items():
+        hourly[movement] = {}
+        for label, intervals in day_data.items():
+            hours_seen = {int(iv[:2]) for iv in intervals}
+            hourly[movement][label] = {
+                hour: sum(intervals.get(f"{hour:02d}:{m:02d}", 0) for m in (0, 15, 30, 45))
+                for hour in hours_seen
+            }
+    return hourly
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CSV output
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Writes the full-analysis hourly pivot table (one approach+movement, all days) to a plain CSV.
 def write_csv(pivot_data, days, col_name, out_path):
     """Write hourly pivot table + TOTAL row to a CSV file."""
     n = len(days)
@@ -290,6 +269,7 @@ def write_csv(pivot_data, days, col_name, out_path):
 CLEAN_MOVEMENT_ORDER = ["L", "T", "R"]
 
 
+# Builds the '<Intersection>_<Date>.xlsx' filename used for the clean summary export.
 def clean_summary_filename(intersection, when=None):
     """
     Build a safe '<Intersection>_<YYYY-MM-DD>.xlsx' filename for the clean
@@ -305,300 +285,309 @@ def clean_summary_filename(intersection, when=None):
 # Excel output
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Shared style objects reused across every sheet-building function below, so a
+# color or font only ever needs to change in one place.
+CENTER        = Alignment(horizontal="center")
+CENTER_MIDDLE = Alignment(horizontal="center", vertical="center")
+CENTER_INDENT = Alignment(horizontal="center", indent=2)
+
+FONT_TITLE        = Font(bold=True, size=13, color="FFFFFF")
+FONT_HEADER       = Font(bold=True, color="FFFFFF", size=10)
+FONT_HEADER_SMALL = Font(bold=True, color="FFFFFF", size=9)
+FONT_TOTAL        = Font(bold=True, color="FFFFFF", size=10)
+FONT_HOUR_LABEL   = Font(bold=True, size=10)
+FONT_SUM_ROW      = Font(bold=True, size=10)
+FONT_DET_ROW      = Font(size=9)
+FONT_SUM_LAST     = Font(bold=True, size=10, color="202020")
+FONT_DET_LAST     = Font(size=9, color="202020")
+FONT_AVG_CELL     = Font(bold=True, size=10, color="202020")
+FONT_INSTRUCTION  = Font(size=9, italic=True, color="444444")
+
+FILL_TITLE       = PatternFill("solid", fgColor="1F4E79")
+FILL_HEADER      = PatternFill("solid", fgColor="2E75B6")
+FILL_TOTAL       = PatternFill("solid", fgColor="1F4E79")
+FILL_AVG         = PatternFill("solid", fgColor="404040")
+FILL_ALT_ROW     = PatternFill("solid", fgColor="EBF3FB")
+FILL_AVG_CELL    = PatternFill("solid", fgColor="E8E8E8")
+FILL_AVG_ALT     = PatternFill("solid", fgColor="D8D8D8")
+FILL_INSTRUCTION = PatternFill("solid", fgColor="EBF3FB")
+FILL_SUM_ROW     = PatternFill("solid", fgColor="D6E4F0")
+FILL_DET_ROW_A   = PatternFill("solid", fgColor="FFFFFF")
+FILL_DET_ROW_B   = PatternFill("solid", fgColor="F5F9FD")
+FILL_SUM_LAST    = PatternFill("solid", fgColor="E0E0E0")
+FILL_DET_LAST    = PatternFill("solid", fgColor="F0F0F0")
+
+
+# Builds the thin light-grey border applied to every table cell in every sheet.
 def _thin_border():
+    """Return a thin light-grey border used on every data cell."""
     s = Side(style="thin", color="AAAAAA")
     return Border(left=s, right=s, top=s, bottom=s)
 
 
-def build_excel(pivot_data, days, title, out_path, pivot_15min=None):
-    """Build a styled Excel workbook with a Data sheet and a Chart sheet.
-    If pivot_15min is provided, also adds '15-min Data' and '15-min Chart' sheets."""
-    wb = Workbook()
-
-    # ── Data sheet ───────────────────────────────────────────────────────────
-    ws        = wb.active
-    ws.title  = "Data"
-    n_days    = len(days)
-
-    avg_col   = n_days + 2          # column index of the Average column
-    avg_fill  = PatternFill("solid", fgColor="404040")
-    avg_hfont = Font(bold=True, color="FFFFFF", size=10)
-
-    # Title row
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=avg_col)
-    tc           = ws.cell(row=1, column=1, value=title)
-    tc.font      = Font(bold=True, size=13, color="FFFFFF")
-    tc.alignment = Alignment(horizontal="center", vertical="center")
-    tc.fill      = PatternFill("solid", fgColor="1F4E79")
+# Writes and styles the merged dark-blue title banner that sits in row 1 of every sheet.
+def _style_title_row(ws, end_col, text):
+    """Write and style the merged title banner in row 1 of a worksheet."""
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=end_col)
+    tc = ws.cell(row=1, column=1, value=text)
+    tc.font, tc.fill, tc.alignment = FONT_TITLE, FILL_TITLE, CENTER_MIDDLE
     ws.row_dimensions[1].height = 24
 
-    # Header row
-    hdr_fill = PatternFill("solid", fgColor="2E75B6")
-    hdr_font = Font(bold=True, color="FFFFFF", size=10)
 
-    def header_cell(row, col, value, fill=None, font=None):
-        c           = ws.cell(row=row, column=col, value=value)
-        c.font      = font or hdr_font
-        c.fill      = fill or hdr_fill
-        c.alignment = Alignment(horizontal="center")
-        c.border    = _thin_border()
+# Applies the standard blue header-row look to a single cell.
+def _style_header_cell(cell):
+    """Apply the standard blue header-row styling to a single cell."""
+    cell.font, cell.fill = FONT_HEADER, FILL_HEADER
+    cell.alignment, cell.border = CENTER, _thin_border()
 
-    header_cell(2, 1, "Hour")
-    for c, day in enumerate(days, start=2):
-        header_cell(2, c, day)
-    header_cell(2, avg_col, "Average", fill=avg_fill, font=avg_hfont)
 
-    # Data rows
-    alt_fill  = PatternFill("solid", fgColor="EBF3FB")
-    avg_dfill = PatternFill("solid", fgColor="E8E8E8")
-    avg_dalt  = PatternFill("solid", fgColor="D8D8D8")
-    avg_dfont = Font(bold=True, size=10, color="202020")
-    for r, (hour, label) in enumerate(zip(HOURS, HOUR_LABELS), start=3):
-        hc           = ws.cell(row=r, column=1, value=label)
-        hc.font      = Font(bold=True, size=10)
-        hc.alignment = Alignment(horizontal="center")
-        hc.border    = _thin_border()
-        if r % 2 == 0:
-            hc.fill = alt_fill
-        vals = []
-        for c, day in enumerate(days, start=2):
-            val            = pivot_data.get(day, {}).get(hour, 0)
-            vals.append(val)
-            cell           = ws.cell(row=r, column=c, value=val)
-            cell.alignment = Alignment(horizontal="center")
-            cell.border    = _thin_border()
-            if r % 2 == 0:
-                cell.fill = alt_fill
-        avg_val  = round(sum(vals) / n_days, 1) if n_days else 0
-        ac        = ws.cell(row=r, column=avg_col, value=avg_val)
-        ac.font   = avg_dfont
-        ac.fill   = avg_dalt if r % 2 == 0 else avg_dfill
-        ac.alignment = Alignment(horizontal="center")
-        ac.border = _thin_border()
+# Sets one uniform column width across a contiguous range of columns.
+def _set_column_widths(ws, start_col, end_col, width):
+    """Set the same column width for every column index in [start_col, end_col]."""
+    for c in range(start_col, end_col + 1):
+        ws.column_dimensions[get_column_letter(c)].width = width
 
-    # Total row
-    total_row  = 3 + len(HOURS)
-    tot_fill   = PatternFill("solid", fgColor="1F4E79")
-    tot_font   = Font(bold=True, color="FFFFFF", size=10)
-    tc2           = ws.cell(row=total_row, column=1, value="Total")
-    tc2.font      = tot_font
-    tc2.fill      = tot_fill
-    tc2.alignment = Alignment(horizontal="center")
-    tc2.border    = _thin_border()
-    day_totals = []
-    for c, day in enumerate(days, start=2):
-        day_total      = sum(pivot_data.get(day, {}).get(h, 0) for h in HOURS)
-        day_totals.append(day_total)
-        cell           = ws.cell(row=total_row, column=c, value=day_total)
-        cell.font      = tot_font
-        cell.fill      = tot_fill
-        cell.alignment = Alignment(horizontal="center")
-        cell.border    = _thin_border()
-    avg_total      = round(sum(day_totals) / n_days, 1) if n_days else 0
-    atc            = ws.cell(row=total_row, column=avg_col, value=avg_total)
-    atc.font       = Font(bold=True, color="FFFFFF", size=10)
-    atc.fill       = PatternFill("solid", fgColor="404040")
-    atc.alignment  = Alignment(horizontal="center")
-    atc.border     = _thin_border()
 
-    # Column widths + freeze
-    ws.column_dimensions["A"].width = 9
-    for c in range(2, avg_col + 1):
-        ws.column_dimensions[get_column_letter(c)].width = 11
-    ws.freeze_panes = "B3"
-
-    # ── Chart sheet ──────────────────────────────────────────────────────────
-    wc       = wb.create_sheet("Chart")
-    chart    = LineChart()
-    chart.title        = title
-    chart.y_axis.title = "Traffic Volume (vehicles)"
-    chart.x_axis.title = "Hour of Day"
-    chart.width        = 28
-    chart.height       = 15
-    chart.y_axis.numFmt = "0"
-    chart.x_axis.delete = False
-    chart.y_axis.delete = False
-
-    data_ref = Reference(ws, min_col=2, max_col=avg_col,
-                         min_row=2, max_row=2 + len(HOURS))
-    chart.add_data(data_ref, titles_from_data=True)
-    cats = Reference(ws, min_col=1, min_row=3, max_row=2 + len(HOURS))
-    chart.set_categories(cats)
-
+# Colors and styles a line chart's series: one colored line per day, plus a
+# thick dashed grey Average line for whatever series comes after them.
+def _style_line_chart_series(chart, n_colored, series_width=18000, marker_size=4, avg_width=28000):
+    """
+    Color the first n_colored series (one per day) using DAY_COLORS with round
+    markers; style any remaining series (the Average line) as a thick dashed
+    grey line with no markers. Shared by both the hourly and 15-min charts.
+    """
     for i, series in enumerate(chart.series):
-        if i < n_days:
+        series.smooth = True
+        if i < n_colored:
             color = DAY_COLORS[i % len(DAY_COLORS)]
-            series.smooth = True
             series.graphicalProperties.line.solidFill        = color
-            series.graphicalProperties.line.width            = 18000
-            series.marker.symbol                             = "circle"
-            series.marker.size                               = 4
-            series.marker.graphicalProperties.solidFill      = color
-            series.marker.graphicalProperties.line.solidFill = color
+            series.graphicalProperties.line.width             = series_width
+            series.marker.symbol                              = "circle"
+            series.marker.size                                = marker_size
+            series.marker.graphicalProperties.solidFill       = color
+            series.marker.graphicalProperties.line.solidFill  = color
         else:
-            # Average — thick dark dashed line, no markers
-            series.smooth = True
             series.graphicalProperties.line.solidFill  = "404040"
-            series.graphicalProperties.line.width      = 28000
+            series.graphicalProperties.line.width      = avg_width
             series.graphicalProperties.line.dashStyle  = "dash"
             series.marker.symbol                       = "none"
 
+
+# Builds the standard right-side legend shared by every line chart sheet.
+def _new_legend():
+    """Build the standard right-side chart legend used by every line chart."""
     legend          = Legend()
     legend.position = "r"
     legend.overlay  = False
-    chart.legend    = legend
+    return legend
 
+
+# Builds the full per-approach/movement workbook: a flat Data sheet, a Chart
+# sheet, and (optionally) the expandable 15-min Data + 15-min Chart sheets.
+def build_excel(pivot_data, days, title, out_path, pivot_15min=None):
+    """
+    Build a styled Excel workbook with a flat "Data" sheet (hourly pivot +
+    Average column) and a "Chart" sheet (line chart of the same data). If
+    pivot_15min is given, also appends "15-min Data" (expandable) and
+    "15-min Chart" sheets. Writes the workbook to out_path.
+    """
+    wb = Workbook()
+
+    # ── Data sheet ───────────────────────────────────────────────────────────
+    ws       = wb.active
+    ws.title = "Data"
+    n_days   = len(days)
+    avg_col  = n_days + 2
+
+    _style_title_row(ws, avg_col, title)
+
+    _style_header_cell(ws.cell(row=2, column=1, value="Hour"))
+    for c, day in enumerate(days, start=2):
+        _style_header_cell(ws.cell(row=2, column=c, value=day))
+    ahdr = ws.cell(row=2, column=avg_col, value="Average")
+    ahdr.font, ahdr.fill = FONT_TOTAL, FILL_AVG
+    ahdr.alignment, ahdr.border = CENTER, _thin_border()
+
+    # Data rows (alternating shading every other hour)
+    for r, (hour, label) in enumerate(zip(HOURS, HOUR_LABELS), start=3):
+        alt = (r % 2 == 0)
+        hc = ws.cell(row=r, column=1, value=label)
+        hc.font, hc.alignment, hc.border = FONT_HOUR_LABEL, CENTER, _thin_border()
+        if alt:
+            hc.fill = FILL_ALT_ROW
+        vals = []
+        for c, day in enumerate(days, start=2):
+            val = pivot_data.get(day, {}).get(hour, 0)
+            vals.append(val)
+            cell = ws.cell(row=r, column=c, value=val)
+            cell.alignment, cell.border = CENTER, _thin_border()
+            if alt:
+                cell.fill = FILL_ALT_ROW
+        avg_val = round(sum(vals) / n_days, 1) if n_days else 0
+        ac = ws.cell(row=r, column=avg_col, value=avg_val)
+        ac.font, ac.fill = FONT_AVG_CELL, (FILL_AVG_ALT if alt else FILL_AVG_CELL)
+        ac.alignment, ac.border = CENTER, _thin_border()
+
+    # Total row
+    total_row = 3 + len(HOURS)
+    tc = ws.cell(row=total_row, column=1, value="Total")
+    tc.font, tc.fill, tc.alignment, tc.border = FONT_TOTAL, FILL_TOTAL, CENTER, _thin_border()
+    day_totals = []
+    for c, day in enumerate(days, start=2):
+        day_total = sum(pivot_data.get(day, {}).get(h, 0) for h in HOURS)
+        day_totals.append(day_total)
+        cell = ws.cell(row=total_row, column=c, value=day_total)
+        cell.font, cell.fill, cell.alignment, cell.border = FONT_TOTAL, FILL_TOTAL, CENTER, _thin_border()
+    avg_total = round(sum(day_totals) / n_days, 1) if n_days else 0
+    atc = ws.cell(row=total_row, column=avg_col, value=avg_total)
+    atc.font, atc.fill, atc.alignment, atc.border = FONT_TOTAL, FILL_AVG, CENTER, _thin_border()
+
+    ws.column_dimensions["A"].width = 9
+    _set_column_widths(ws, 2, avg_col, 11)
+    ws.freeze_panes = "B3"
+
+    # ── Chart sheet ──────────────────────────────────────────────────────────
+    wc    = wb.create_sheet("Chart")
+    chart = LineChart()
+    chart.title, chart.y_axis.title, chart.x_axis.title = title, "Traffic Volume (vehicles)", "Hour of Day"
+    chart.width, chart.height = 28, 15
+    chart.y_axis.numFmt  = "0"
+    chart.x_axis.delete  = chart.y_axis.delete = False
+
+    data_ref = Reference(ws, min_col=2, max_col=avg_col, min_row=2, max_row=2 + len(HOURS))
+    chart.add_data(data_ref, titles_from_data=True)
+    chart.set_categories(Reference(ws, min_col=1, min_row=3, max_row=2 + len(HOURS)))
+    _style_line_chart_series(chart, n_days)
+    chart.legend = _new_legend()
     wc.add_chart(chart, "B2")
 
     # ── 15-min sheets (optional) ─────────────────────────────────────────────
     if pivot_15min is not None:
-        _build_15min_data_sheet(wb, pivot_15min, days, title, n_days)
+        _build_expandable_hour_sheet(
+            wb, "15-min Data", f"{title} — 15-Minute Intervals", days,
+            value_lookup=lambda day, iv: pivot_15min.get(day, {}).get(iv, 0),
+            hours=HOURS,
+            last_col_label="Average",
+            last_col_fn=lambda vals: round(sum(vals) / n_days, 1) if n_days else 0,
+        )
         _build_15min_chart_sheet(wb, pivot_15min, days, title, n_days)
 
     wb.save(out_path)
     print(f"  XLSX → {out_path}")
 
 
-def _build_15min_data_sheet(wb, pivot_15min, days, title, n_days):
-    """Grouped/expandable sheet: hourly summary rows + collapsible 15-min detail rows."""
-    ws      = wb.create_sheet("15-min Data")
-    avg_col = n_days + 2
+# Builds one worksheet where each hour is a collapsible group: a bold summary
+# row plus four hidden 15-minute detail rows beneath it. Shared by the
+# per-movement "15-min Data" sheet (columns=days, last column=Average) and the
+# Clean Summary workbook (columns=approach+movement codes, last column=Total).
+def _build_expandable_hour_sheet(wb, sheet_name, title, columns, value_lookup,
+                                  hours, last_col_label, last_col_fn):
+    """
+    Build a worksheet where each hour is a bold summary row followed by four
+    collapsed 15-minute detail rows (click [+] to expand) — one column per
+    entry in `columns`, plus a final aggregate column, and a Total row at the
+    bottom.
+
+    value_lookup(column, "HH:MM") -> int          volume for one column/interval
+    hours                                          which hours (0-22) to render as rows
+    last_col_fn(row_values: list[int]) -> number   value for the aggregate column
+    Returns the created worksheet.
+    """
+    ws       = wb.create_sheet(sheet_name)
+    last_col = len(columns) + 2
 
     # Summary rows appear ABOVE their detail rows so [+] sits on the summary row
-    ws.sheet_properties.outlinePr.summaryBelow  = False
-    ws.sheet_properties.outlinePr.summaryRight  = False
+    ws.sheet_properties.outlinePr.summaryBelow = False
+    ws.sheet_properties.outlinePr.summaryRight = False
 
-    # Title row
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=avg_col)
-    tc           = ws.cell(row=1, column=1, value=f"{title} — 15-Minute Intervals")
-    tc.font      = Font(bold=True, size=13, color="FFFFFF")
-    tc.alignment = Alignment(horizontal="center", vertical="center")
-    tc.fill      = PatternFill("solid", fgColor="1F4E79")
-    ws.row_dimensions[1].height = 24
+    _style_title_row(ws, last_col, title)
 
     # Instruction row
-    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=avg_col)
-    ic           = ws.cell(row=2, column=1,
-                           value="Click [+] on the left margin to expand an hour into its four 15-minute intervals")
-    ic.font      = Font(size=9, italic=True, color="444444")
-    ic.alignment = Alignment(horizontal="center")
-    ic.fill      = PatternFill("solid", fgColor="EBF3FB")
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=last_col)
+    ic = ws.cell(row=2, column=1,
+                 value="Click [+] on the left margin to expand an hour into its four 15-minute intervals")
+    ic.font, ic.fill, ic.alignment = FONT_INSTRUCTION, FILL_INSTRUCTION, CENTER
     ws.row_dimensions[2].height = 16
 
     # Header row
-    hdr_fill = PatternFill("solid", fgColor="2E75B6")
-    hdr_font = Font(bold=True, color="FFFFFF", size=10)
-    avg_hfill = PatternFill("solid", fgColor="404040")
-    h = ws.cell(row=3, column=1, value="Hour / Interval")
-    h.font = hdr_font; h.fill = hdr_fill
-    h.alignment = Alignment(horizontal="center"); h.border = _thin_border()
-    for c, day in enumerate(days, start=2):
-        cell = ws.cell(row=3, column=c, value=day)
-        cell.font = hdr_font; cell.fill = hdr_fill
-        cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
-    ahdr = ws.cell(row=3, column=avg_col, value="Average")
-    ahdr.font = Font(bold=True, color="FFFFFF", size=10)
-    ahdr.fill = avg_hfill
-    ahdr.alignment = Alignment(horizontal="center"); ahdr.border = _thin_border()
-
-    sum_fill   = PatternFill("solid", fgColor="D6E4F0")
-    sum_font   = Font(bold=True, size=10)
-    det_font   = Font(size=9)
-    det_fill_a = PatternFill("solid", fgColor="FFFFFF")
-    det_fill_b = PatternFill("solid", fgColor="F5F9FD")
-    tot_fill   = PatternFill("solid", fgColor="1F4E79")
-    tot_font   = Font(bold=True, color="FFFFFF", size=10)
-    avg_sfill  = PatternFill("solid", fgColor="E0E0E0")   # summary average cell
-    avg_dfill  = PatternFill("solid", fgColor="F0F0F0")   # detail average cell
-    avg_sfont  = Font(bold=True, size=10, color="202020")
-    avg_dfont  = Font(size=9, color="202020")
+    _style_header_cell(ws.cell(row=3, column=1, value="Hour / Interval"))
+    for c, col in enumerate(columns, start=2):
+        _style_header_cell(ws.cell(row=3, column=c, value=col))
+    lhdr = ws.cell(row=3, column=last_col, value=last_col_label)
+    lhdr.font, lhdr.fill = FONT_TOTAL, FILL_AVG
+    lhdr.alignment, lhdr.border = CENTER, _thin_border()
 
     r = 4
-    for h_idx, hour in enumerate(HOURS):
-        # ── Summary row (hourly total + average) ─────────────────────────────
+    col_totals = defaultdict(int)
+    for hour in hours:
+        # ── Summary row (hourly total across the 4 quarters) ─────────────────
         sc = ws.cell(row=r, column=1, value=f"{hour:02d}:00")
-        sc.font = sum_font; sc.fill = sum_fill
-        sc.alignment = Alignment(horizontal="center"); sc.border = _thin_border()
-        hour_vals = []
-        for c, day in enumerate(days, start=2):
-            val = sum(pivot_15min.get(day, {}).get(f"{hour:02d}:{m:02d}", 0)
-                      for m in (0, 15, 30, 45))
-            hour_vals.append(val)
+        sc.font, sc.fill = FONT_SUM_ROW, FILL_SUM_ROW
+        sc.alignment, sc.border = CENTER, _thin_border()
+        row_vals = []
+        for c, col in enumerate(columns, start=2):
+            val = sum(value_lookup(col, f"{hour:02d}:{m:02d}") for m in (0, 15, 30, 45))
+            row_vals.append(val)
             cell = ws.cell(row=r, column=c, value=val)
-            cell.font = sum_font; cell.fill = sum_fill
-            cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
-        hour_avg = round(sum(hour_vals) / n_days, 1) if n_days else 0
-        sac = ws.cell(row=r, column=avg_col, value=hour_avg)
-        sac.font = avg_sfont; sac.fill = avg_sfill
-        sac.alignment = Alignment(horizontal="center"); sac.border = _thin_border()
+            cell.font, cell.fill = FONT_SUM_ROW, FILL_SUM_ROW
+            cell.alignment, cell.border = CENTER, _thin_border()
+        for col, v in zip(columns, row_vals):
+            col_totals[col] += v
+        slc = ws.cell(row=r, column=last_col, value=last_col_fn(row_vals))
+        slc.font, slc.fill = FONT_SUM_LAST, FILL_SUM_LAST
+        slc.alignment, slc.border = CENTER, _thin_border()
         r += 1
 
         # ── Detail rows (collapsed by default) ───────────────────────────────
         for i, m in enumerate((0, 15, 30, 45)):
             interval = f"{hour:02d}:{m:02d}"
-            fill = det_fill_b if i % 2 else det_fill_a
+            fill = FILL_DET_ROW_B if i % 2 else FILL_DET_ROW_A
             dc = ws.cell(row=r, column=1, value=interval)
-            dc.font = det_font; dc.fill = fill
-            dc.alignment = Alignment(horizontal="center", indent=2); dc.border = _thin_border()
+            dc.font, dc.fill = FONT_DET_ROW, fill
+            dc.alignment, dc.border = CENTER_INDENT, _thin_border()
             iv_vals = []
-            for c, day in enumerate(days, start=2):
-                val  = pivot_15min.get(day, {}).get(interval, 0)
+            for c, col in enumerate(columns, start=2):
+                val = value_lookup(col, interval)
                 iv_vals.append(val)
                 cell = ws.cell(row=r, column=c, value=val)
-                cell.font = det_font; cell.fill = fill
-                cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
-            iv_avg = round(sum(iv_vals) / n_days, 1) if n_days else 0
-            dac = ws.cell(row=r, column=avg_col, value=iv_avg)
-            dac.font = avg_dfont; dac.fill = avg_dfill
-            dac.alignment = Alignment(horizontal="center"); dac.border = _thin_border()
+                cell.font, cell.fill = FONT_DET_ROW, fill
+                cell.alignment, cell.border = CENTER, _thin_border()
+            dlc = ws.cell(row=r, column=last_col, value=last_col_fn(iv_vals))
+            dlc.font, dlc.fill = FONT_DET_LAST, FILL_DET_LAST
+            dlc.alignment, dlc.border = CENTER, _thin_border()
             ws.row_dimensions[r].outline_level = 1
             ws.row_dimensions[r].hidden        = True
             r += 1
 
     # Total row
-    tc2 = ws.cell(row=r, column=1, value="Total")
-    tc2.font = tot_font; tc2.fill = tot_fill
-    tc2.alignment = Alignment(horizontal="center"); tc2.border = _thin_border()
-    tot_vals = []
-    for c, day in enumerate(days, start=2):
-        val  = sum(pivot_15min.get(day, {}).get(iv, 0) for iv in INTERVALS)
-        tot_vals.append(val)
+    tc = ws.cell(row=r, column=1, value="Total")
+    tc.font, tc.fill, tc.alignment, tc.border = FONT_TOTAL, FILL_TOTAL, CENTER, _thin_border()
+    totals_row = [col_totals[c] for c in columns]
+    for c, val in zip(range(2, last_col), totals_row):
         cell = ws.cell(row=r, column=c, value=val)
-        cell.font = tot_font; cell.fill = tot_fill
-        cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
-    tot_avg = round(sum(tot_vals) / n_days, 1) if n_days else 0
-    tac = ws.cell(row=r, column=avg_col, value=tot_avg)
-    tac.font = Font(bold=True, color="FFFFFF", size=10)
-    tac.fill = PatternFill("solid", fgColor="404040")
-    tac.alignment = Alignment(horizontal="center"); tac.border = _thin_border()
+        cell.font, cell.fill, cell.alignment, cell.border = FONT_TOTAL, FILL_TOTAL, CENTER, _thin_border()
+    gc = ws.cell(row=r, column=last_col, value=last_col_fn(totals_row))
+    gc.font, gc.fill, gc.alignment, gc.border = FONT_TOTAL, FILL_AVG, CENTER, _thin_border()
 
     ws.column_dimensions["A"].width = 15
-    for c in range(2, avg_col + 1):
-        ws.column_dimensions[get_column_letter(c)].width = 11
+    _set_column_widths(ws, 2, last_col, 11)
     ws.freeze_panes = "B4"
+    return ws
 
 
+# Builds the flat 92-row 15-minute data table plus its own line chart, on a dedicated sheet.
 def _build_15min_chart_sheet(wb, pivot_15min, days, title, n_days):
-    """Flat 92-row data table + line chart on a dedicated sheet."""
+    """Build a flat 92-row 15-minute data table plus a line chart, on a dedicated sheet."""
     wc      = wb.create_sheet("15-min Chart")
     avg_col = n_days + 2
 
-    # ── Data table (chart draws from this) ───────────────────────────────────
-    hdr_fill  = PatternFill("solid", fgColor="2E75B6")
-    hdr_font  = Font(bold=True, color="FFFFFF", size=9)
-    avg_hfill = PatternFill("solid", fgColor="404040")
-
     h = wc.cell(row=1, column=1, value="Interval")
-    h.font = hdr_font; h.fill = hdr_fill
-    h.alignment = Alignment(horizontal="center")
+    h.font, h.fill, h.alignment = FONT_HEADER_SMALL, FILL_HEADER, CENTER
     for c, day in enumerate(days, start=2):
         cell = wc.cell(row=1, column=c, value=day)
-        cell.font = hdr_font; cell.fill = hdr_fill
-        cell.alignment = Alignment(horizontal="center")
+        cell.font, cell.fill, cell.alignment = FONT_HEADER_SMALL, FILL_HEADER, CENTER
     ahdr = wc.cell(row=1, column=avg_col, value="Average")
-    ahdr.font = Font(bold=True, color="FFFFFF", size=9)
-    ahdr.fill = avg_hfill
-    ahdr.alignment = Alignment(horizontal="center")
+    ahdr.font, ahdr.fill, ahdr.alignment = FONT_HEADER_SMALL, FILL_AVG, CENTER
 
     for r, interval in enumerate(INTERVALS, start=2):
         wc.cell(row=r, column=1, value=interval)
@@ -610,51 +599,22 @@ def _build_15min_chart_sheet(wb, pivot_15min, days, title, n_days):
         avg_val = round(sum(iv_vals) / n_days, 1) if n_days else 0
         wc.cell(row=r, column=avg_col, value=avg_val)
 
-    # ── Chart ─────────────────────────────────────────────────────────────────
-    chart              = LineChart()
-    chart.title        = f"{title} — 15-Minute Intervals"
-    chart.y_axis.title = "Traffic Volume (vehicles)"
-    chart.x_axis.title = "15-Minute Interval"
-    chart.width        = 32
-    chart.height       = 16
+    chart = LineChart()
+    chart.title = f"{title} — 15-Minute Intervals"
+    chart.y_axis.title, chart.x_axis.title = "Traffic Volume (vehicles)", "15-Minute Interval"
+    chart.width, chart.height = 32, 16
     chart.y_axis.numFmt = "0"
-    chart.x_axis.delete = False
-    chart.y_axis.delete = False
+    chart.x_axis.delete = chart.y_axis.delete = False
 
-    data_ref = Reference(wc, min_col=2, max_col=avg_col,
-                         min_row=1, max_row=1 + len(INTERVALS))
+    data_ref = Reference(wc, min_col=2, max_col=avg_col, min_row=1, max_row=1 + len(INTERVALS))
     chart.add_data(data_ref, titles_from_data=True)
-    cats = Reference(wc, min_col=1, min_row=2, max_row=1 + len(INTERVALS))
-    chart.set_categories(cats)
-
-    for i, series in enumerate(chart.series):
-        if i < n_days:
-            color = DAY_COLORS[i % len(DAY_COLORS)]
-            series.smooth          = True
-            series.graphicalProperties.line.solidFill        = color
-            series.graphicalProperties.line.width            = 15000
-            series.marker.symbol                             = "circle"
-            series.marker.size                               = 3
-            series.marker.graphicalProperties.solidFill      = color
-            series.marker.graphicalProperties.line.solidFill = color
-        else:
-            # Average — thick dark dashed line, no markers
-            series.smooth = True
-            series.graphicalProperties.line.solidFill  = "404040"
-            series.graphicalProperties.line.width      = 25000
-            series.graphicalProperties.line.dashStyle  = "dash"
-            series.marker.symbol                       = "none"
-
-    legend          = Legend()
-    legend.position = "r"
-    legend.overlay  = False
-    chart.legend    = legend
-
+    chart.set_categories(Reference(wc, min_col=1, min_row=2, max_row=1 + len(INTERVALS)))
+    _style_line_chart_series(chart, n_days, series_width=15000, marker_size=3, avg_width=25000)
+    chart.legend = _new_legend()
     wc.add_chart(chart, f"{get_column_letter(avg_col + 2)}1")
 
     wc.column_dimensions["A"].width = 9
-    for c in range(2, avg_col + 1):
-        wc.column_dimensions[get_column_letter(c)].width = 10
+    _set_column_widths(wc, 2, avg_col, 10)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -666,6 +626,7 @@ def _build_15min_chart_sheet(wb, pivot_15min, days, title, n_days):
 CLEAN_APPROACH_ORDER = ["EB", "WB", "NB", "SB"]
 
 
+# Builds the single consolidated, chart-free, expandable workbook combining every approach+movement.
 def build_clean_summary_excel(approach_pivots_15, approach_order, intersection, out_path,
                                movement_order=CLEAN_MOVEMENT_ORDER):
     """
@@ -711,178 +672,119 @@ def build_clean_summary_excel(approach_pivots_15, approach_order, intersection, 
     hours_present = sorted({int(iv[:2]) for ivs in col_interval.values() for iv in ivs})
 
     wb = Workbook()
-    ws = wb.active
-    ws.title = "Clean Summary"
-    total_col = len(columns) + 2
-
-    # Summary rows appear ABOVE their detail rows so [+] sits on the summary row
-    ws.sheet_properties.outlinePr.summaryBelow = False
-    ws.sheet_properties.outlinePr.summaryRight = False
-
-    # Title row
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_col)
-    tc           = ws.cell(row=1, column=1, value=f"{intersection} — Clean Summary")
-    tc.font      = Font(bold=True, size=13, color="FFFFFF")
-    tc.alignment = Alignment(horizontal="center", vertical="center")
-    tc.fill      = PatternFill("solid", fgColor="1F4E79")
-    ws.row_dimensions[1].height = 24
-
-    # Instruction row
-    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=total_col)
-    ic           = ws.cell(row=2, column=1,
-                           value="Click [+] on the left margin to expand an hour into its four 15-minute intervals")
-    ic.font      = Font(size=9, italic=True, color="444444")
-    ic.alignment = Alignment(horizontal="center")
-    ic.fill      = PatternFill("solid", fgColor="EBF3FB")
-    ws.row_dimensions[2].height = 16
-
-    # Header row
-    hdr_fill  = PatternFill("solid", fgColor="2E75B6")
-    hdr_font  = Font(bold=True, color="FFFFFF", size=10)
-    tot_hfill = PatternFill("solid", fgColor="404040")
-    h = ws.cell(row=3, column=1, value="Hour / Interval")
-    h.font = hdr_font; h.fill = hdr_fill
-    h.alignment = Alignment(horizontal="center"); h.border = _thin_border()
-    for c, col in enumerate(columns, start=2):
-        cell = ws.cell(row=3, column=c, value=col)
-        cell.font = hdr_font; cell.fill = hdr_fill
-        cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
-    thdr = ws.cell(row=3, column=total_col, value="Total")
-    thdr.font = Font(bold=True, color="FFFFFF", size=10)
-    thdr.fill = tot_hfill
-    thdr.alignment = Alignment(horizontal="center"); thdr.border = _thin_border()
-
-    sum_fill   = PatternFill("solid", fgColor="D6E4F0")
-    sum_font   = Font(bold=True, size=10)
-    det_font   = Font(size=9)
-    det_fill_a = PatternFill("solid", fgColor="FFFFFF")
-    det_fill_b = PatternFill("solid", fgColor="F5F9FD")
-    tot_fill   = PatternFill("solid", fgColor="1F4E79")
-    tot_font   = Font(bold=True, color="FFFFFF", size=10)
-    tot_sfill  = PatternFill("solid", fgColor="E0E0E0")   # summary row total cell
-    tot_dfill  = PatternFill("solid", fgColor="F0F0F0")   # detail row total cell
-    tot_sfont  = Font(bold=True, size=10, color="202020")
-    tot_dfont  = Font(size=9, color="202020")
-
-    r = 4
-    col_grand_totals = defaultdict(int)
-    for hour in hours_present:
-        # ── Summary row (hourly total) ────────────────────────────────────────
-        sc = ws.cell(row=r, column=1, value=f"{hour:02d}:00")
-        sc.font = sum_font; sc.fill = sum_fill
-        sc.alignment = Alignment(horizontal="center"); sc.border = _thin_border()
-        hour_vals = []
-        for c, col in enumerate(columns, start=2):
-            val = sum(col_interval[col].get(f"{hour:02d}:{m:02d}", 0) for m in (0, 15, 30, 45))
-            hour_vals.append(val)
-            cell = ws.cell(row=r, column=c, value=val)
-            cell.font = sum_font; cell.fill = sum_fill
-            cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
-        for col, v in zip(columns, hour_vals):
-            col_grand_totals[col] += v
-        stc = ws.cell(row=r, column=total_col, value=sum(hour_vals))
-        stc.font = tot_sfont; stc.fill = tot_sfill
-        stc.alignment = Alignment(horizontal="center"); stc.border = _thin_border()
-        r += 1
-
-        # ── Detail rows (collapsed by default) ───────────────────────────────
-        for i, m in enumerate((0, 15, 30, 45)):
-            interval = f"{hour:02d}:{m:02d}"
-            fill = det_fill_b if i % 2 else det_fill_a
-            dc = ws.cell(row=r, column=1, value=interval)
-            dc.font = det_font; dc.fill = fill
-            dc.alignment = Alignment(horizontal="center", indent=2); dc.border = _thin_border()
-            iv_vals = []
-            for c, col in enumerate(columns, start=2):
-                val = col_interval[col].get(interval, 0)
-                iv_vals.append(val)
-                cell = ws.cell(row=r, column=c, value=val)
-                cell.font = det_font; cell.fill = fill
-                cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
-            dtc = ws.cell(row=r, column=total_col, value=sum(iv_vals))
-            dtc.font = tot_dfont; dtc.fill = tot_dfill
-            dtc.alignment = Alignment(horizontal="center"); dtc.border = _thin_border()
-            ws.row_dimensions[r].outline_level = 1
-            ws.row_dimensions[r].hidden        = True
-            r += 1
-
-    # Total row
-    tc2 = ws.cell(row=r, column=1, value="Total")
-    tc2.font = tot_font; tc2.fill = tot_fill
-    tc2.alignment = Alignment(horizontal="center"); tc2.border = _thin_border()
-    grand_total = 0
-    for c, col in enumerate(columns, start=2):
-        val = col_grand_totals[col]
-        grand_total += val
-        cell = ws.cell(row=r, column=c, value=val)
-        cell.font = tot_font; cell.fill = tot_fill
-        cell.alignment = Alignment(horizontal="center"); cell.border = _thin_border()
-    gtc = ws.cell(row=r, column=total_col, value=grand_total)
-    gtc.font = Font(bold=True, color="FFFFFF", size=10)
-    gtc.fill = PatternFill("solid", fgColor="404040")
-    gtc.alignment = Alignment(horizontal="center"); gtc.border = _thin_border()
-
-    ws.column_dimensions["A"].width = 15
-    for c in range(2, total_col + 1):
-        ws.column_dimensions[get_column_letter(c)].width = 11
-    ws.freeze_panes = "B4"
-
+    wb.remove(wb.active)   # the shared sheet builder creates its own named sheet
+    _build_expandable_hour_sheet(
+        wb, "Clean Summary", f"{intersection} — Clean Summary", columns,
+        value_lookup=lambda col, iv: col_interval[col].get(iv, 0),
+        hours=hours_present,
+        last_col_label="Total",
+        last_col_fn=sum,
+    )
     wb.save(out_path)
     print(f"  Clean XLSX → {out_path}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pipeline orchestration — shared by the CLI entry point (main()) and gui.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Default logger used when no log callback is supplied (plain stdout printing, ignores tags).
+def _console_log(msg, tag=""):
+    """Print a pipeline log message to the console, ignoring the GUI-only tag."""
+    print(msg)
+
+
+# Runs the full pipeline for every approach: resolve zones, load data, and
+# write whichever outputs are requested. Shared by main() (CLI) and gui.py
+# (GUI) so both stay in sync through one implementation instead of two.
+def run_pipeline(intersection, approach_dirs, output_dir, zone_configs=None,
+                  full_analysis=True, clean_summary=False, log=_console_log):
+    """
+    Run the traffic-volume pipeline across every approach in approach_dirs.
+
+    approach_dirs: {approach_code: directory_path}
+    zone_configs:  optional {approach_code: {zone: {movement: column}}} — a
+                   custom mapping (e.g. from the GUI's Configure Zones dialog);
+                   any approach missing from this dict falls back to auto-detect.
+    log:           callable(message, tag="") used for progress output — the
+                   GUI passes its own log-widget writer to get colored tags.
+    Returns the clean summary file path if one was written, else None.
+    """
+    zone_configs = zone_configs or {}
+    os.makedirs(output_dir, exist_ok=True)
+    log(f"Intersection : {intersection}", "info")
+    log(f"Output folder: {output_dir}", "dim")
+    log("─" * 56, "dim")
+
+    approach_pivots_15 = {}   # {approach: {movement: {day_label: {"HH:MM": volume}}}}
+
+    for approach, directory in approach_dirs.items():
+        log(f"\n▸ {approach} ({APPROACH_LABELS.get(approach, approach)})  ← {directory}", "info")
+
+        if not os.path.isdir(directory):
+            log("  [SKIP] Directory not found.", "err")
+            continue
+
+        if approach in zone_configs:
+            zone_map = config_to_zone_map(zone_configs[approach])
+            log("  Using custom zone configuration:", "dim")
+        else:
+            zone_map = discover_zones(directory, approach)
+            log("  Using auto-detected zone configuration:", "dim")
+
+        if not zone_map:
+            log("  [SKIP] No active zone assignments found.", "err")
+            continue
+
+        for zone, mappings in zone_map.items():
+            desc = "  +  ".join(f"{mv}←{col}" for mv, col in mappings)
+            log(f"  {zone:14s}  {desc}", "dim")
+
+        all_pivot_15 = load_all_files_15min(directory, zone_map)
+        all_pivot    = hourly_from_15min(all_pivot_15)
+        approach_pivots_15[approach] = all_pivot_15
+
+        if full_analysis:
+            for movement, pivot_data in all_pivot.items():
+                days  = list(pivot_data.keys())
+                label = MOVEMENT_LABELS.get(movement, movement)
+                approach_label = APPROACH_LABELS.get(approach, approach)
+                title = f"{approach_label} {label} — {intersection}"
+                stem  = f"{approach}_{movement}"
+
+                csv_path  = os.path.join(output_dir, f"{stem}.csv")
+                xlsx_path = os.path.join(output_dir, f"{stem}.xlsx")
+
+                write_csv(pivot_data, days, f"{approach}{movement}", csv_path)
+                log(f"  CSV  → {os.path.basename(csv_path)}", "ok")
+                build_excel(pivot_data, days, title, xlsx_path,
+                            pivot_15min=all_pivot_15.get(movement))
+                log(f"  XLSX → {os.path.basename(xlsx_path)}", "ok")
+
+    summary_path = None
+    if clean_summary:
+        summary_path = os.path.join(output_dir, clean_summary_filename(intersection))
+        build_clean_summary_excel(approach_pivots_15, list(approach_dirs.keys()),
+                                   intersection, summary_path)
+        log(f"  Clean XLSX → {os.path.basename(summary_path)}", "ok")
+
+    log("\n" + "─" * 56, "dim")
+    log("✓  Done. All files written to output folder.", "ok")
+    return summary_path
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
+# CLI entry point: runs the pipeline using the hardcoded CONFIG section above.
 def main():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-    approach_pivots_15 = {}   # {approach: {movement: {day_label: {"HH:MM": volume}}}}
-
-    for approach, directory in APPROACH_DIRS.items():
-        print(f"\n{'─'*50}")
-        print(f"Approach: {approach}  ({directory})")
-
-        if not os.path.isdir(directory):
-            print(f"  [SKIP] Directory not found: {directory}")
-            continue
-
-        zone_map = discover_zones(directory, approach)
-        if not zone_map:
-            print(f"  [SKIP] No matching zones found in {directory}")
-            continue
-
-        for zone, mappings in zone_map.items():
-            desc = ", ".join(f"{mv}←{col}" for mv, col in mappings)
-            print(f"  {zone:12s}  {desc}")
-
-        all_pivot    = load_all_files(directory, zone_map)
-        all_pivot_15 = load_all_files_15min(directory, zone_map)
-        approach_pivots_15[approach] = all_pivot_15
-
-        if FULL_ANALYSIS_EXPORT:
-            for movement, pivot_data in all_pivot.items():
-                days  = list(pivot_data.keys())
-                label = MOVEMENT_LABELS.get(movement, movement)
-                approach_label = APPROACH_LABELS.get(approach, approach)
-                title = f"{approach_label} {label}\n{INTERSECTION}"
-                col   = f"{approach}{movement}"
-                stem  = f"{approach}_{movement}"
-
-                csv_path  = os.path.join(OUTPUT_DIR, f"{stem}.csv")
-                xlsx_path = os.path.join(OUTPUT_DIR, f"{stem}.xlsx")
-
-                write_csv(pivot_data, days, col, csv_path)
-                build_excel(pivot_data, days, title.replace("\n", " — "), xlsx_path,
-                            pivot_15min=all_pivot_15.get(movement))
-
-    if CLEAN_SUMMARY_EXPORT:
-        summary_path = os.path.join(OUTPUT_DIR, clean_summary_filename(INTERSECTION))
-        build_clean_summary_excel(approach_pivots_15, list(APPROACH_DIRS.keys()),
-                                   INTERSECTION, summary_path)
-
-    print(f"\nDone. All files written to '{OUTPUT_DIR}/'")
+    """Run the pipeline once using the CONFIG constants defined at the top of this file."""
+    run_pipeline(
+        INTERSECTION, APPROACH_DIRS, OUTPUT_DIR,
+        full_analysis=FULL_ANALYSIS_EXPORT,
+        clean_summary=CLEAN_SUMMARY_EXPORT,
+    )
 
 
 if __name__ == "__main__":
